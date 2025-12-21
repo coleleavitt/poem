@@ -96,6 +96,10 @@ struct APIOperationParam {
     explode: Option<bool>,
     #[darling(default)]
     style: Option<ParameterStyle>,
+    /// If true, this parameter will not appear in the OpenAPI schema but will
+    /// still be extracted at runtime.
+    #[darling(default)]
+    hidden: bool,
     // for oauth
     #[darling(multiple, default, rename = "scope")]
     scopes: Vec<Path>,
@@ -323,7 +327,10 @@ fn generate_operation(
         };
         use_args.push(pname.clone());
 
-        if !hidden {
+        // Check if this parameter should be hidden from OpenAPI schema
+        let param_hidden = operation_param.hidden;
+
+        if !hidden && !param_hidden {
             // register arg type
             ctx.register_items.push(quote! {
                 <#arg_ty as #crate_name::ApiExtractor>::register(registry);
@@ -416,6 +423,11 @@ fn generate_operation(
             };
             #param_checker
         });
+
+        // Skip OpenAPI metadata for hidden parameters
+        if param_hidden {
+            continue;
+        }
 
         // param meta
         let param_desc = optional_literal_string(&param_description);
