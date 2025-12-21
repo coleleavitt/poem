@@ -26,8 +26,8 @@ fn parse_accept(headers: &HeaderMap) -> Vec<Mime> {
     items.into_iter().map(|(mime, _)| mime).collect()
 }
 
-impl<'a> FromRequest<'a> for Accept {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for Accept {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(Self(parse_accept(req.headers())))
     }
 }
@@ -46,7 +46,7 @@ mod tests {
                 "text/html, text/yaml;q=0.5, application/xhtml+xml, application/xml;q=0.9, */*;q=0.1",
             )
             .finish();
-        let accept = Accept::from_request_without_body(&req).await.unwrap();
+        let accept = Accept::from_request_without_body(&req, &()).await.unwrap();
         assert_eq!(
             accept.0,
             &[

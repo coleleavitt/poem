@@ -47,7 +47,7 @@ impl ParsePayload for PlainText<String> {
     const IS_REQUIRED: bool = true;
 
     async fn from_request(request: &Request, body: &mut RequestBody) -> Result<Self> {
-        Ok(Self(String::from_request(request, body).await?))
+        Ok(Self(String::from_request(request, body, &()).await?))
     }
 }
 

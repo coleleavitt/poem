@@ -32,7 +32,7 @@ pub use catch_error::CatchError;
 pub use embed::{EmbeddedFileEndpoint, EmbeddedFilesEndpoint};
 pub use endpoint::{
     BoxEndpoint, DynEndpoint, EitherEndpoint, Endpoint, EndpointExt, IntoEndpoint, ToDynEndpoint,
-    make, make_sync,
+    WithState, make, make_sync,
 };
 pub use inspect_all_err::InspectAllError;
 pub use inspect_err::InspectError;

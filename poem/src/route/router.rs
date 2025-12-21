@@ -1,4 +1,13 @@
-use std::{str::FromStr, sync::Arc};
+//! Compile-time verified routing with state management.
+//!
+//! The `Route<S>` router is generic over its required state type `S`. Handlers
+//! that use the `State<T>` extractor require that `T: FromRef<S>`, which is
+//! enforced at compile time.
+//!
+//! A `Route<S>` cannot be served directly - you must call `.with_state(state)`
+//! to provide the state and convert it to `Route<()>`, which can then be served.
+
+use std::{marker::PhantomData, str::FromStr, sync::Arc};
 
 use regex::Regex;
 
@@ -13,16 +22,37 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 struct PathPrefix(usize);
 
-/// Routing object
+/// Routing object with compile-time state verification.
 ///
-/// You can match the full path or wildcard path, and use the
-/// [`Path`](crate::web::Path) extractor to get the path parameters.
+/// `Route<S>` means a router that requires state of type `S` to handle requests.
+/// - `Route<()>` (or just `Route` with default) can be served directly
+/// - `Route<S>` must have `.with_state(state)` called to provide the required state
 ///
-/// # Errors
+/// # Compile-Time State Verification
 ///
-/// - [`NotFoundError`]
+/// When a handler uses `State<T>` extractor, the compiler verifies that the
+/// router's state type `S` can provide `T` (via `T: FromRef<S>`).
+///
+/// ```
+/// use poem::{Route, EndpointExt, get, handler, web::State};
+///
+/// #[derive(Clone)]
+/// struct AppState { value: i32 }
+///
+/// #[handler]
+/// fn use_state(State(state): State<AppState>) -> String {
+///     format!("{}", state.value)
+/// }
+///
+/// // This compiles because we provide the required state:
+/// let app = Route::new()
+///     .at("/", get(use_state))
+///     .with_state(AppState { value: 42 });
+/// ```
 ///
 /// # Example
+///
+/// ## Basic Usage
 ///
 /// ```
 /// use poem::{
@@ -78,7 +108,7 @@ struct PathPrefix(usize);
 /// # });
 /// ```
 ///
-/// # Nested
+/// ## Nested Routes
 ///
 /// ```
 /// use poem::{
@@ -102,38 +132,65 @@ struct PathPrefix(usize);
 /// # });
 /// ```
 ///
-/// # Nested no strip
+/// ## With State
 ///
 /// ```
 /// use poem::{
-///     Endpoint, Request, Route, handler,
-///     http::{StatusCode, Uri},
+///     Route, EndpointExt, get, handler,
+///     web::State,
 ///     test::TestClient,
 /// };
 ///
-/// #[handler]
-/// fn index() -> &'static str {
-///     "hello"
+/// #[derive(Clone)]
+/// struct AppState {
+///     message: String,
 /// }
 ///
-/// let app = Route::new().nest_no_strip("/foo", Route::new().at("/foo/bar", index));
-/// let cli = TestClient::new(app);
+/// #[handler]
+/// fn greet(State(state): State<AppState>) -> String {
+///     state.message.clone()
+/// }
 ///
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-/// let resp = cli.get("/foo/bar").send().await;
+/// let state = AppState { message: "Hello!".to_string() };
+/// let app = Route::new()
+///     .at("/", get(greet))
+///     .with_state(state);
+///
+/// let cli = TestClient::new(app);
+/// let resp = cli.get("/").send().await;
 /// resp.assert_status_is_ok();
-/// resp.assert_text("hello").await;
+/// resp.assert_text("Hello!").await;
 /// # });
 /// ```
-#[derive(Default)]
-pub struct Route {
-    tree: RadixTree<BoxEndpoint<'static>>,
+///
+/// # Errors
+///
+/// - [`NotFoundError`]
+pub struct Route<S = ()> {
+    tree: RadixTree<BoxEndpoint<'static, S>>,
+    _marker: PhantomData<S>,
 }
 
-impl Route {
+impl<S> Default for Route<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<S> Route<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     /// Create a new routing object.
-    pub fn new() -> Route {
-        Default::default()
+    pub fn new() -> Route<S> {
+        Route {
+            tree: RadixTree::default(),
+            _marker: PhantomData,
+        }
     }
 
     /// Add an [Endpoint] to the specified path.
@@ -144,7 +201,7 @@ impl Route {
     #[must_use]
     pub fn at<E>(self, path: impl AsRef<str>, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         check_result(self.try_at(path, ep))
@@ -153,7 +210,7 @@ impl Route {
     /// Attempts to add an [Endpoint] to the specified path.
     pub fn try_at<E>(mut self, path: impl AsRef<str>, ep: E) -> Result<Self, RouteError>
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.tree
@@ -169,7 +226,7 @@ impl Route {
     #[must_use]
     pub fn just_at<E>(self, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.at("/", ep)
@@ -183,7 +240,7 @@ impl Route {
     #[must_use]
     pub fn nest<E>(self, path: impl AsRef<str>, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         check_result(self.try_nest(path, ep))
@@ -193,7 +250,7 @@ impl Route {
     /// prefix.
     pub fn try_nest<E>(self, path: impl AsRef<str>, ep: E) -> Result<Self, RouteError>
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.internal_nest(&normalize_path(path.as_ref()), ep, true)
@@ -207,7 +264,7 @@ impl Route {
     #[must_use]
     pub fn nest_no_strip<E>(self, path: impl AsRef<str>, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         check_result(self.try_nest_no_strip(path, ep))
@@ -217,7 +274,7 @@ impl Route {
     /// the prefix.
     pub fn try_nest_no_strip<E>(self, path: impl AsRef<str>, ep: E) -> Result<Self, RouteError>
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.internal_nest(&normalize_path(path.as_ref()), ep, false)
@@ -225,7 +282,7 @@ impl Route {
 
     fn internal_nest<E>(mut self, path: &str, ep: E, strip: bool) -> Result<Self, RouteError>
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         let ep = Arc::new(ep.into_endpoint());
@@ -234,17 +291,18 @@ impl Route {
             path.push('/');
         }
 
-        struct Nest<T> {
+        struct Nest<T, S> {
             inner: T,
             root: bool,
             prefix_len: usize,
             prefix_for_path_pattern: usize,
+            _marker: PhantomData<S>,
         }
 
-        impl<E: Endpoint> Endpoint for Nest<E> {
+        impl<E: Endpoint<S>, S: Clone + Send + Sync> Endpoint<S> for Nest<E, S> {
             type Output = Response;
 
-            async fn call(&self, mut req: Request) -> Result<Self::Output> {
+            async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
                 if !self.root {
                     let params = &mut req.state_mut().match_params;
                     if params.last().map(|(name, _)| name.as_str()) != Some("--poem-rest") {
@@ -269,7 +327,7 @@ impl Route {
                 *req.uri_mut() = new_uri;
 
                 req.set_data(PathPrefix(self.prefix_for_path_pattern));
-                Ok(self.inner.call(req).await?.into_response())
+                Ok(self.inner.call(req, state).await?.into_response())
             }
         }
 
@@ -302,6 +360,7 @@ impl Route {
                 root: false,
                 prefix_len,
                 prefix_for_path_pattern,
+                _marker: PhantomData::<S>,
             }
             .boxed(),
         )?;
@@ -313,11 +372,76 @@ impl Route {
                 root: true,
                 prefix_len,
                 prefix_for_path_pattern,
+                _marker: PhantomData::<S>,
             }
             .boxed(),
         )?;
 
         Ok(self)
+    }
+
+    /// Provide state for this router, converting `Route<S>` to `Route<()>`.
+    ///
+    /// This is required before the router can be served. Calling this method
+    /// "bakes in" the state, allowing the router to be used without external
+    /// state.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use poem::{Route, EndpointExt, get, handler, web::State, test::TestClient};
+    ///
+    /// #[derive(Clone)]
+    /// struct AppState { value: i32 }
+    ///
+    /// #[handler]
+    /// fn index(State(state): State<AppState>) -> String {
+    ///     format!("{}", state.value)
+    /// }
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let app = Route::new()
+    ///     .at("/", get(index))
+    ///     .with_state(AppState { value: 42 });
+    ///
+    /// // Now `app` is Route<()> and can be served
+    /// let cli = TestClient::new(app);
+    /// let resp = cli.get("/").send().await;
+    /// resp.assert_status_is_ok();
+    /// resp.assert_text("42").await;
+    /// # });
+    /// ```
+    pub fn with_state(self, state: S) -> Route<()> {
+        // Convert all endpoints by wrapping them with the provided state
+        let state = Arc::new(state);
+        Route {
+            tree: self.tree.map(|ep| {
+                let state = state.clone();
+                WithStateEndpoint { inner: ep, state }.boxed()
+            }),
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// Wrapper that provides state to an inner endpoint.
+struct WithStateEndpoint<E, S> {
+    inner: E,
+    state: Arc<S>,
+}
+
+impl<E, S> Endpoint<()> for WithStateEndpoint<E, S>
+where
+    E: Endpoint<S>,
+    S: Clone + Send + Sync + 'static,
+{
+    type Output = E::Output;
+
+    async fn call(&self, mut req: Request, _state: &()) -> Result<Self::Output> {
+        // Also store in extensions for State<T> extractor compatibility
+        req.extensions_mut()
+            .insert(crate::web::StateData((*self.state).clone()));
+        self.inner.call(req, &*self.state).await
     }
 }
 
@@ -325,10 +449,13 @@ impl Route {
 #[derive(Debug, Clone)]
 pub struct PathPattern(pub Arc<str>);
 
-impl Endpoint for Route {
+impl<S> Endpoint<S> for Route<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     type Output = Response;
 
-    async fn call(&self, mut req: Request) -> Result<Self::Output> {
+    async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
         match self.tree.matches(req.uri().path()) {
             Some(matches) => {
                 req.state_mut().match_params.extend(matches.params);
@@ -348,7 +475,7 @@ impl Endpoint for Route {
                 };
                 req.set_data(pattern.clone());
 
-                let result = matches.data.data.call(req).await;
+                let result = matches.data.data.call(req, state).await;
 
                 // Add PathPattern to the innermost response so that metrics instrumentation
                 // can report the innermost matched pattern.
@@ -387,7 +514,7 @@ mod tests {
     use http::StatusCode;
 
     use super::*;
-    use crate::{Error, endpoint::make_sync, handler, test::TestClient};
+    use crate::{Error, endpoint::make_sync, get, handler, test::TestClient, web::State};
 
     #[test]
     fn test_normalize_path() {
@@ -401,9 +528,9 @@ mod tests {
         uri.path().to_string()
     }
 
-    async fn get(route: &impl Endpoint<Output = Response>, path: &'static str) -> String {
+    async fn get_response(route: &impl Endpoint<(), Output = Response>, path: &'static str) -> String {
         route
-            .call(Request::builder().uri(Uri::from_static(path)).finish())
+            .call(Request::builder().uri(Uri::from_static(path)).finish(), &())
             .await
             .unwrap()
             .take_body()
@@ -422,9 +549,9 @@ mod tests {
                 .nest("/inner", Route::new().at("/c", h)),
         );
 
-        assert_eq!(get(&r, "/a").await, "/a");
-        assert_eq!(get(&r, "/b").await, "/b");
-        assert_eq!(get(&r, "/inner/c").await, "/c");
+        assert_eq!(get_response(&r, "/a").await, "/a");
+        assert_eq!(get_response(&r, "/b").await, "/b");
+        assert_eq!(get_response(&r, "/inner/c").await, "/c");
 
         let r = Route::new().nest(
             "/api",
@@ -434,9 +561,9 @@ mod tests {
                 .nest("/inner", Route::new().at("/c", h)),
         );
 
-        assert_eq!(get(&r, "/api/a").await, "/a");
-        assert_eq!(get(&r, "/api/b").await, "/b");
-        assert_eq!(get(&r, "/api/inner/c").await, "/c");
+        assert_eq!(get_response(&r, "/api/a").await, "/a");
+        assert_eq!(get_response(&r, "/api/b").await, "/b");
+        assert_eq!(get_response(&r, "/api/inner/c").await, "/c");
     }
 
     #[tokio::test]
@@ -449,9 +576,9 @@ mod tests {
                 .nest_no_strip("/inner", Route::new().at("/inner/c", h)),
         );
 
-        assert_eq!(get(&r, "/a").await, "/a");
-        assert_eq!(get(&r, "/b").await, "/b");
-        assert_eq!(get(&r, "/inner/c").await, "/inner/c");
+        assert_eq!(get_response(&r, "/a").await, "/a");
+        assert_eq!(get_response(&r, "/b").await, "/b");
+        assert_eq!(get_response(&r, "/inner/c").await, "/inner/c");
 
         let r = Route::new().nest_no_strip(
             "/api",
@@ -461,9 +588,9 @@ mod tests {
                 .nest_no_strip("/api/inner", Route::new().at("/api/inner/c", h)),
         );
 
-        assert_eq!(get(&r, "/api/a").await, "/api/a");
-        assert_eq!(get(&r, "/api/b").await, "/api/b");
-        assert_eq!(get(&r, "/api/inner/c").await, "/api/inner/c");
+        assert_eq!(get_response(&r, "/api/a").await, "/api/a");
+        assert_eq!(get_response(&r, "/api/b").await, "/api/b");
+        assert_eq!(get_response(&r, "/api/inner/c").await, "/api/inner/c");
     }
 
     #[tokio::test]
@@ -478,7 +605,7 @@ mod tests {
                 ),
             ),
         );
-        assert_eq!(get(&r, "/a/b/c?name=abc").await, "/c?name=abc");
+        assert_eq!(get_response(&r, "/a/b/c?name=abc").await, "/c?name=abc");
     }
 
     #[tokio::test]
@@ -490,38 +617,38 @@ mod tests {
                 make_sync(|req| req.uri().path_and_query().unwrap().to_string()),
             ),
         );
-        assert_eq!(get(&r, "/a").await, "/");
-        assert_eq!(get(&r, "/a?a=1").await, "/?a=1");
+        assert_eq!(get_response(&r, "/a").await, "/");
+        assert_eq!(get_response(&r, "/a?a=1").await, "/?a=1");
     }
 
     #[test]
     #[should_panic]
     fn duplicate_1() {
-        let _ = Route::new().at("/", h).at("/", h);
+        let _: Route<()> = Route::new().at("/", h).at("/", h);
     }
 
     #[test]
     #[should_panic]
     fn duplicate_2() {
-        let _ = Route::new().at("/a", h).nest("/a", h);
+        let _: Route<()> = Route::new().at("/a", h).nest("/a", h);
     }
 
     #[test]
     #[should_panic]
     fn duplicate_3() {
-        let _ = Route::new().nest("/a", h).nest("/a", h);
+        let _: Route<()> = Route::new().nest("/a", h).nest("/a", h);
     }
 
     #[test]
     #[should_panic]
     fn duplicate_4() {
-        let _ = Route::new().at("/a/:a", h).at("/a/:a", h);
+        let _: Route<()> = Route::new().at("/a/:a", h).at("/a/:a", h);
     }
 
     #[test]
     #[should_panic]
     fn duplicate_5() {
-        let _ = Route::new().at("/a/*:v", h).at("/a/*", h);
+        let _: Route<()> = Route::new().at("/a/*:v", h).at("/a/*", h);
     }
 
     #[tokio::test]
@@ -652,7 +779,7 @@ mod tests {
         }
     }
 
-    impl<E: Endpoint> crate::Middleware<E> for PathPatternSpy {
+    impl<E: Endpoint<S>, S: Send + Sync> crate::Middleware<E, S> for PathPatternSpy {
         type Output = PathPatternSpyEndpoint<E>;
 
         fn transform(&self, ep: E) -> Self::Output {
@@ -668,11 +795,11 @@ mod tests {
         inner: E,
     }
 
-    impl<E: Endpoint> Endpoint for PathPatternSpyEndpoint<E> {
+    impl<E: Endpoint<S>, S: Send + Sync> Endpoint<S> for PathPatternSpyEndpoint<E> {
         type Output = Response;
 
-        async fn call(&self, req: Request) -> Result<Self::Output> {
-            let result = self.inner.call(req).await.map(IntoResponse::into_response);
+        async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
+            let result = self.inner.call(req, state).await.map(IntoResponse::into_response);
 
             match result {
                 Ok(res) => {
@@ -741,7 +868,7 @@ mod tests {
     impl Endpoint for ErrorEndpoint {
         type Output = Response;
 
-        async fn call(&self, _req: Request) -> Result<Self::Output> {
+        async fn call(&self, _req: Request, _state: &()) -> Result<Self::Output> {
             Err(Error::from_status(StatusCode::SERVICE_UNAVAILABLE))
         }
     }
@@ -799,5 +926,51 @@ mod tests {
             spy.last_pattern().await,
             "/nest_no_strip1/nest_no_strip2/:id"
         );
+    }
+
+    // Test compile-time state verification
+    #[tokio::test]
+    async fn test_with_state() {
+        #[derive(Clone)]
+        struct AppState {
+            value: i32,
+        }
+
+        #[handler(internal)]
+        async fn index(State(state): State<AppState>) -> String {
+            format!("{}", state.value)
+        }
+
+        let app = Route::new()
+            .at("/", get(index))
+            .with_state(AppState { value: 42 });
+
+        let cli = TestClient::new(app);
+        let resp = cli.get("/").send().await;
+        resp.assert_status_is_ok();
+        resp.assert_text("42").await;
+    }
+
+    #[tokio::test]
+    async fn test_nested_with_state() {
+        #[derive(Clone)]
+        struct AppState {
+            prefix: String,
+        }
+
+        #[handler(internal)]
+        async fn index(State(state): State<AppState>) -> String {
+            format!("{}-hello", state.prefix)
+        }
+
+        let inner = Route::new().at("/hello", get(index));
+        let app = Route::new()
+            .nest("/api", inner)
+            .with_state(AppState { prefix: "api".to_string() });
+
+        let cli = TestClient::new(app);
+        let resp = cli.get("/api/hello").send().await;
+        resp.assert_status_is_ok();
+        resp.assert_text("api-hello").await;
     }
 }

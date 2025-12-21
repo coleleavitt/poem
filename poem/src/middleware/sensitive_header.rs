@@ -72,7 +72,7 @@ impl SensitiveHeader {
     }
 }
 
-impl<E: Endpoint> Middleware<E> for SensitiveHeader {
+impl<E: Endpoint<S>, S: Send + Sync> Middleware<E, S> for SensitiveHeader {
     type Output = SensitiveHeaderEndpoint<E>;
 
     fn transform(&self, ep: E) -> Self::Output {
@@ -91,15 +91,15 @@ pub struct SensitiveHeaderEndpoint<E> {
     applied_to: AppliedTo,
 }
 
-impl<E: Endpoint> Endpoint for SensitiveHeaderEndpoint<E> {
+impl<E: Endpoint<S>, S: Send + Sync> Endpoint<S> for SensitiveHeaderEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, mut req: Request) -> Result<Self::Output> {
+    async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
         if self.applied_to != AppliedTo::ResponseOnly {
             set_sensitive(req.headers_mut(), &self.headers);
         }
 
-        let mut resp = self.inner.call(req).await?.into_response();
+        let mut resp = self.inner.call(req, state).await?.into_response();
 
         if self.applied_to != AppliedTo::RequestOnly {
             set_sensitive(resp.headers_mut(), &self.headers);
@@ -151,7 +151,8 @@ mod tests {
                 .with_header("x-api-key4", "c")
         }
 
-        let cli = TestClient::new(index.with(create_middleware().request_only()));
+        let ep = EndpointExt::<()>::with(index, create_middleware().request_only());
+        let cli = TestClient::new(ep);
 
         let resp = create_request(&cli).send().await;
         assert!(!resp.0.headers().get("x-api-key3").unwrap().is_sensitive());
@@ -169,7 +170,8 @@ mod tests {
                 .with_header("x-api-key4", "c")
         }
 
-        let cli = TestClient::new(index.with(create_middleware().response_only()));
+        let ep = EndpointExt::<()>::with(index, create_middleware().response_only());
+        let cli = TestClient::new(ep);
 
         let resp = create_request(&cli).send().await;
         assert!(resp.0.headers().get("x-api-key3").unwrap().is_sensitive());
@@ -187,7 +189,8 @@ mod tests {
                 .with_header("x-api-key4", "c")
         }
 
-        let cli = TestClient::new(index.with(create_middleware()));
+        let ep = EndpointExt::<()>::with(index, create_middleware());
+        let cli = TestClient::new(ep);
         let resp = create_request(&cli).send().await;
 
         assert!(resp.0.headers().get("x-api-key3").unwrap().is_sensitive());

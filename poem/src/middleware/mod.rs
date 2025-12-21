@@ -61,6 +61,9 @@ use crate::endpoint::{EitherEndpoint, Endpoint};
 
 /// Represents a middleware trait.
 ///
+/// The type parameter `S` represents the state type that the endpoint requires.
+/// By default, it is `()` for stateless endpoints.
+///
 /// # Create your own middleware
 ///
 /// ```
@@ -93,7 +96,7 @@ use crate::endpoint::{EitherEndpoint, Endpoint};
 /// impl<E: Endpoint> Endpoint for TokenMiddlewareImpl<E> {
 ///     type Output = E::Output;
 ///
-///     async fn call(&self, mut req: Request) -> Result<Self::Output> {
+///     async fn call(&self, mut req: Request, state: &()) -> Result<Self::Output> {
 ///         if let Some(value) = req
 ///             .headers()
 ///             .get(TOKEN_HEADER)
@@ -105,7 +108,7 @@ use crate::endpoint::{EitherEndpoint, Endpoint};
 ///         }
 ///
 ///         // call the next endpoint.
-///         self.ep.call(req).await
+///         self.ep.call(req, state).await
 ///     }
 /// }
 ///
@@ -147,7 +150,7 @@ use crate::endpoint::{EitherEndpoint, Endpoint};
 /// #[derive(Clone)]
 /// struct Token(String);
 ///
-/// async fn token_middleware<E: Endpoint>(next: E, mut req: Request) -> Result<E::Output> {
+/// async fn token_middleware<E: Endpoint>(next: Arc<E>, mut req: Request, _state: ()) -> Result<E::Output> {
 ///     if let Some(value) = req
 ///         .headers()
 ///         .get(TOKEN_HEADER)
@@ -159,7 +162,7 @@ use crate::endpoint::{EitherEndpoint, Endpoint};
 ///     }
 ///
 ///     // call the next endpoint.
-///     next.call(req).await
+///     next.call(req, &()).await
 /// }
 ///
 /// let ep = index.around(token_middleware);
@@ -171,13 +174,13 @@ use crate::endpoint::{EitherEndpoint, Endpoint};
 /// resp.assert_text("abc").await;
 /// # });
 /// ```
-pub trait Middleware<E: Endpoint> {
+pub trait Middleware<E: Endpoint<S>, S = ()> {
     /// New endpoint type.
     ///
     /// If you don't know what type to use, then you can use
     /// [`BoxEndpoint`](crate::endpoint::BoxEndpoint), which will bring some
     /// performance loss, but it is insignificant.
-    type Output: Endpoint;
+    type Output: Endpoint<S>;
 
     /// Transform the input [`Endpoint`] to another one.
     fn transform(&self, ep: E) -> Self::Output;
@@ -198,13 +201,13 @@ pub trait Middleware<E: Endpoint> {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), std::io::Error> {
-    ///     let ep = index.with(
+    ///     let ep = EndpointExt::<()>::with(index, 
     ///         SetHeader::new()
     ///             .appending("myheader", "a")
     ///             .combine(SetHeader::new().appending("myheader", "b")),
     ///     );
     ///
-    ///     let resp = ep.call(Request::default()).await.unwrap();
+    ///     let resp = ep.call(Request::default(), &()).await.unwrap();
     ///     let values = resp
     ///         .headers()
     ///         .get_all("myheader")
@@ -215,9 +218,9 @@ pub trait Middleware<E: Endpoint> {
     ///     Ok(())
     /// }
     /// ```
-    fn combine<T>(self, other: T) -> CombineMiddleware<Self, T, E>
+    fn combine<T>(self, other: T) -> CombineMiddleware<Self, T, E, S>
     where
-        T: Middleware<Self::Output> + Sized,
+        T: Middleware<Self::Output, S> + Sized,
         Self: Sized,
     {
         CombineMiddleware {
@@ -243,19 +246,19 @@ pub trait Middleware<E: Endpoint> {
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), std::io::Error> {
-    ///     let ep1 = index.with(
+    ///     let ep1 = EndpointExt::<()>::with(index, 
     ///         SetHeader::new()
     ///             .appending("myheader", "a")
     ///             .combine_if(false, SetHeader::new().appending("myheader", "b")),
     ///     );
     ///
-    ///     let ep2 = index.with(
+    ///     let ep2 = EndpointExt::<()>::with(index, 
     ///         SetHeader::new()
     ///             .appending("myheader", "a")
     ///             .combine_if(true, SetHeader::new().appending("myheader", "b")),
     ///     );
     ///
-    ///     let resp = ep1.call(Request::default()).await.unwrap();
+    ///     let resp = ep1.call(Request::default(), &()).await.unwrap();
     ///     let values = resp
     ///         .headers()
     ///         .get_all("myheader")
@@ -264,7 +267,7 @@ pub trait Middleware<E: Endpoint> {
     ///         .collect::<Vec<_>>();
     ///     assert_eq!(values, vec!["a"]);
     ///
-    ///     let resp = ep2.call(Request::default()).await.unwrap();
+    ///     let resp = ep2.call(Request::default(), &()).await.unwrap();
     ///     let values = resp
     ///         .headers()
     ///         .get_all("myheader")
@@ -279,9 +282,9 @@ pub trait Middleware<E: Endpoint> {
         self,
         enable: bool,
         other: T,
-    ) -> EitherMiddleware<Self, CombineMiddleware<Self, T, E>, E>
+    ) -> EitherMiddleware<Self, CombineMiddleware<Self, T, E, S>, E, S>
     where
-        T: Middleware<Self::Output> + Sized,
+        T: Middleware<Self::Output, S> + Sized,
         Self: Sized,
     {
         if !enable {
@@ -292,7 +295,7 @@ pub trait Middleware<E: Endpoint> {
     }
 }
 
-impl<E: Endpoint> Middleware<E> for () {
+impl<E: Endpoint<S>, S> Middleware<E, S> for () {
     type Output = E;
 
     #[inline]
@@ -301,7 +304,7 @@ impl<E: Endpoint> Middleware<E> for () {
     }
 }
 
-impl<E: Endpoint, T: Middleware<E>> Middleware<E> for &T {
+impl<E: Endpoint<S>, S, T: Middleware<E, S>> Middleware<E, S> for &T {
     type Output = T::Output;
 
     fn transform(&self, ep: E) -> Self::Output {
@@ -310,17 +313,17 @@ impl<E: Endpoint, T: Middleware<E>> Middleware<E> for &T {
 }
 
 /// A middleware that combines two middlewares.
-pub struct CombineMiddleware<A, B, E> {
+pub struct CombineMiddleware<A, B, E, S = ()> {
     a: A,
     b: B,
-    _mark: PhantomData<E>,
+    _mark: PhantomData<(E, S)>,
 }
 
-impl<A, B, E> Middleware<E> for CombineMiddleware<A, B, E>
+impl<A, B, E, S> Middleware<E, S> for CombineMiddleware<A, B, E, S>
 where
-    A: Middleware<E>,
-    B: Middleware<A::Output>,
-    E: Endpoint,
+    A: Middleware<E, S>,
+    B: Middleware<A::Output, S>,
+    E: Endpoint<S>,
 {
     type Output = B::Output;
 
@@ -332,14 +335,14 @@ where
 
 /// The enum `EitherMiddleware` with variants `Left` and `Right` is a general
 /// purpose sum type with two cases.
-pub enum EitherMiddleware<A, B, E> {
+pub enum EitherMiddleware<A, B, E, S = ()> {
     /// A middleware of type `A`
-    A(A, PhantomData<E>),
+    A(A, PhantomData<(E, S)>),
     /// B middleware of type `B`
-    B(B, PhantomData<E>),
+    B(B, PhantomData<(E, S)>),
 }
 
-impl<A, B, E> EitherMiddleware<A, B, E> {
+impl<A, B, E, S> EitherMiddleware<A, B, E, S> {
     /// Create a new `EitherMiddleware` with the left variant.
     #[inline]
     pub fn left(a: A) -> Self {
@@ -353,11 +356,12 @@ impl<A, B, E> EitherMiddleware<A, B, E> {
     }
 }
 
-impl<A, B, E> Middleware<E> for EitherMiddleware<A, B, E>
+impl<A, B, E, S> Middleware<E, S> for EitherMiddleware<A, B, E, S>
 where
-    A: Middleware<E>,
-    B: Middleware<E>,
-    E: Endpoint,
+    A: Middleware<E, S>,
+    B: Middleware<E, S>,
+    E: Endpoint<S>,
+    S: Send + Sync,
 {
     type Output = EitherEndpoint<A::Output, B::Output>;
 
@@ -373,13 +377,14 @@ where
 poem_derive::generate_implement_middlewares!();
 
 /// A middleware implemented by a closure.
-pub struct FnMiddleware<T>(T);
+pub struct FnMiddleware<T, S = ()>(T, PhantomData<S>);
 
-impl<T, E, E2> Middleware<E> for FnMiddleware<T>
+impl<T, E, E2, S> Middleware<E, S> for FnMiddleware<T, S>
 where
     T: Fn(E) -> E2,
-    E: Endpoint,
-    E2: Endpoint,
+    E: Endpoint<S>,
+    E2: Endpoint<S>,
+    S: Send + Sync,
 {
     type Output = E2;
 
@@ -389,8 +394,8 @@ where
 }
 
 /// Make middleware with a closure.
-pub fn make<T>(f: T) -> FnMiddleware<T> {
-    FnMiddleware(f)
+pub fn make<T, S>(f: T) -> FnMiddleware<T, S> {
+    FnMiddleware(f, PhantomData)
 }
 
 #[cfg(test)]
@@ -419,8 +424,8 @@ mod tests {
         impl<E: Endpoint> Endpoint for AddHeader<E> {
             type Output = Response;
 
-            async fn call(&self, req: Request) -> Result<Self::Output> {
-                let mut resp = self.ep.call(req).await?.into_response();
+            async fn call(&self, req: Request, state: &()) -> Result<Self::Output> {
+                let mut resp = self.ep.call(req, state).await?.into_response();
                 resp.headers_mut()
                     .insert(self.header.clone(), self.value.clone());
                 Ok(resp)
@@ -446,11 +451,14 @@ mod tests {
             data.0.to_string()
         }
 
-        let ep = index.with((
-            AddData::new(10),
-            SetHeader::new().appending("myheader-1", "a"),
-            SetHeader::new().appending("myheader-2", "b"),
-        ));
+        let ep = EndpointExt::<()>::with(
+            index,
+            (
+                AddData::new(10),
+                SetHeader::new().appending("myheader-1", "a"),
+                SetHeader::new().appending("myheader-2", "b"),
+            ),
+        );
         let cli = TestClient::new(ep);
 
         let resp = cli.get("/").send().await;

@@ -11,7 +11,7 @@ mod utils;
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{FnArg, GenericParam, ItemFn, Member, Result, parse_macro_input};
+use syn::{FnArg, GenericArgument, GenericParam, ItemFn, Member, PathArguments, Result, Type, parse_macro_input};
 
 /// Wrap an asynchronous function as an `Endpoint`.
 ///
@@ -97,27 +97,48 @@ fn generate_handler(internal: bool, input: TokenStream) -> Result<TokenStream> {
 
     let mut extractors = Vec::new();
     let mut args = Vec::new();
+    let mut state_bounds = Vec::new();
+    
     for (idx, input) in item_fn.sig.inputs.clone().into_iter().enumerate() {
         if let FnArg::Typed(pat) = input {
             let ty = &pat.ty;
             let id = quote::format_ident!("p{}", idx);
             args.push(id.clone());
             extractors.push(quote! {
-                let #id = <#ty as #crate_name::FromRequest>::from_request(&req, &mut body).await?;
+                let #id = <#ty as #crate_name::FromRequest<'_, __S>>::from_request(&req, &mut body, state).await?;
             });
+            
+            // Check if this type is State<T> and extract T to add FromRef<__S> bound
+            if let Some(inner_ty) = extract_state_inner_type(ty) {
+                state_bounds.push(quote! {
+                    #inner_ty: #crate_name::web::FromRef<__S>
+                });
+            }
         }
     }
+
+    // Generate where clause bounds for State<T> extractors
+    let state_bounds_clause = if state_bounds.is_empty() {
+        quote! {}
+    } else {
+        quote! { #(#state_bounds,)* }
+    };
 
     let expanded = quote! {
         #(#docs)*
         #[allow(non_camel_case_types)]
         #def_struct
 
-        impl #impl_generics #crate_name::Endpoint for #ident #type_generics #where_clause {
+        impl<__S> #impl_generics #crate_name::Endpoint<__S> for #ident #type_generics
+        where
+            __S: ::std::clone::Clone + ::std::marker::Send + ::std::marker::Sync + 'static,
+            #state_bounds_clause
+            #where_clause
+        {
             type Output = #crate_name::Response;
 
             #[allow(unused_mut)]
-            async fn call(&self, mut req: #crate_name::Request) -> #crate_name::Result<Self::Output> {
+            async fn call(&self, mut req: #crate_name::Request, state: &__S) -> #crate_name::Result<Self::Output> {
                 let (req, mut body) = req.split();
                 #(#extractors)*
                 #item_fn
@@ -131,6 +152,35 @@ fn generate_handler(internal: bool, input: TokenStream) -> Result<TokenStream> {
     Ok(expanded.into())
 }
 
+/// Extracts the inner type `T` from a `State<T>` type.
+/// Returns `Some(T)` if the type is `State<T>` or `web::State<T>` or similar,
+/// otherwise returns `None`.
+fn extract_state_inner_type(ty: &Type) -> Option<Type> {
+    let path = match ty {
+        Type::Path(path) => path,
+        _ => return None,
+    };
+    
+    // Check if the last segment is "State"
+    let last_segment = path.path.segments.last()?;
+    if last_segment.ident != "State" {
+        return None;
+    }
+    
+    // Extract the generic argument
+    let args = match &last_segment.arguments {
+        PathArguments::AngleBracketed(args) => args,
+        _ => return None,
+    };
+    
+    // Get the first type argument
+    let first_arg = args.args.first()?;
+    match first_arg {
+        GenericArgument::Type(inner_ty) => Some(inner_ty.clone()),
+        _ => None,
+    }
+}
+
 #[doc(hidden)]
 #[proc_macro]
 pub fn generate_implement_middlewares(_: TokenStream) -> TokenStream {
@@ -142,13 +192,13 @@ pub fn generate_implement_middlewares(_: TokenStream) -> TokenStream {
             .collect::<Vec<_>>();
         let output_type = idents.last().unwrap();
         let first_ident = idents.first().unwrap();
-        let mut where_clauses = vec![quote! { #first_ident: Middleware<E> }];
+        let mut where_clauses = vec![quote! { #first_ident: Middleware<E, S> }];
         let mut transforms = Vec::new();
 
         for k in 1..i {
             let prev_ident = &idents[k - 1];
             let current_ident = &idents[k];
-            where_clauses.push(quote! { #current_ident: Middleware<#prev_ident::Output> });
+            where_clauses.push(quote! { #current_ident: Middleware<#prev_ident::Output, S> });
         }
 
         for k in 0..i {
@@ -157,9 +207,10 @@ pub fn generate_implement_middlewares(_: TokenStream) -> TokenStream {
         }
 
         let expanded = quote! {
-            impl<E, #(#idents),*> Middleware<E> for (#(#idents),*)
+            impl<E, S, #(#idents),*> Middleware<E, S> for (#(#idents),*)
                 where
-                    E: Endpoint,
+                    E: Endpoint<S>,
+                    S: Send + Sync,
                     #(#where_clauses,)*
             {
                 type Output = #output_type::Output;

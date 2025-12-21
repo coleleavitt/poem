@@ -128,8 +128,8 @@ pub struct Multipart {
     inner: multer::Multipart<'static>,
 }
 
-impl<'a> FromRequest<'a> for Multipart {
-    async fn from_request(req: &'a Request, body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for Multipart {
+    async fn from_request(req: &'a Request, body: &mut RequestBody, _state: &S) -> Result<Self> {
         let content_type = req
             .headers()
             .get(header::CONTENT_TYPE)

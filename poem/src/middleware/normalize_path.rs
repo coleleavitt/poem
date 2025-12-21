@@ -58,7 +58,7 @@ impl NormalizePath {
     }
 }
 
-impl<E: Endpoint> Middleware<E> for NormalizePath {
+impl<E: Endpoint<S>, S: Send + Sync> Middleware<E, S> for NormalizePath {
     type Output = NormalizePathEndpoint<E>;
 
     fn transform(&self, ep: E) -> Self::Output {
@@ -77,10 +77,10 @@ pub struct NormalizePathEndpoint<E> {
     style: TrailingSlash,
 }
 
-impl<E: Endpoint> Endpoint for NormalizePathEndpoint<E> {
+impl<E: Endpoint<S>, S: Send + Sync> Endpoint<S> for NormalizePathEndpoint<E> {
     type Output = E::Output;
 
-    async fn call(&self, mut req: Request) -> Result<Self::Output> {
+    async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
         let original_path = req
             .uri()
             .path_and_query()
@@ -114,7 +114,7 @@ impl<E: Endpoint> Endpoint for NormalizePathEndpoint<E> {
             }
         }
 
-        self.inner.call(req).await
+        self.inner.call(req, state).await
     }
 }
 

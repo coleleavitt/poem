@@ -136,7 +136,7 @@
 //! #[handler]
 //! async fn create_user() {}
 //!
-//! let app = Route::new()
+//! let app = Route::<()>::new()
 //!     .at("/user/:id", get(get_user).delete(delete_user))
 //!     .at("/user", post(create_user));
 //! ```
@@ -197,7 +197,7 @@
 //! fn bar() {}
 //!
 //! let app =
-//!     Route::new()
+//!     Route::<()>::new()
 //!         .at("/foo", foo)
 //!         .at("/bar", bar)
 //!         .catch_error(|err: NotFoundError| async move {
@@ -218,7 +218,7 @@
 //! #[handler]
 //! fn index() {}
 //!
-//! let app = Route::new().at("/", index).with(Tracing);
+//! let app = Route::<()>::new().at("/", index).with(Tracing);
 //! ```
 //!
 //! You can create your own middleware, see also [`Middleware`].

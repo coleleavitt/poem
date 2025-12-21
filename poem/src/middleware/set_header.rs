@@ -89,7 +89,7 @@ impl SetHeader {
     }
 }
 
-impl<E: Endpoint> Middleware<E> for SetHeader {
+impl<E: Endpoint<S>, S: Send + Sync> Middleware<E, S> for SetHeader {
     type Output = SetHeaderEndpoint<E>;
 
     fn transform(&self, ep: E) -> Self::Output {
@@ -106,11 +106,11 @@ pub struct SetHeaderEndpoint<E> {
     actions: Vec<Action>,
 }
 
-impl<E: Endpoint> Endpoint for SetHeaderEndpoint<E> {
+impl<E: Endpoint<S>, S: Send + Sync> Endpoint<S> for SetHeaderEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
-        let mut resp = self.inner.call(req).await?.into_response();
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
+        let mut resp = self.inner.call(req, state).await?.into_response();
         let headers = resp.headers_mut();
 
         for action in &self.actions {
@@ -138,15 +138,15 @@ mod tests {
         #[handler(internal)]
         fn index() {}
 
-        let cli = TestClient::new(
-            index.with(
-                SetHeader::new()
-                    .overriding("custom-a", "a")
-                    .overriding("custom-a", "b")
-                    .appending("custom-b", "a")
-                    .appending("custom-b", "b"),
-            ),
+        let ep = EndpointExt::<()>::with(
+            index,
+            SetHeader::new()
+                .overriding("custom-a", "a")
+                .overriding("custom-a", "b")
+                .appending("custom-b", "a")
+                .appending("custom-b", "b"),
         );
+        let cli = TestClient::new(ep);
 
         let resp = cli.get("/").send().await;
 

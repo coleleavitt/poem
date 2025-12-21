@@ -246,7 +246,7 @@ pub(crate) fn generate(args: DeriveInput) -> GeneratorResult<TokenStream> {
             const IS_REQUIRED: bool = true;
 
             async fn from_request(request: &#crate_name::__private::poem::Request, body: &mut #crate_name::__private::poem::RequestBody) -> #crate_name::__private::poem::Result<Self> {
-                let mut multipart = <#crate_name::__private::poem::web::Multipart as #crate_name::__private::poem::FromRequest>::from_request(request, body).await?;
+                let mut multipart = <#crate_name::__private::poem::web::Multipart as #crate_name::__private::poem::FromRequest>::from_request(request, body, &()).await?;
                 #(#skip_fields)*
                 #(let mut #fields = ::std::option::Option::None;)*
                 while let ::std::option::Option::Some(field) = multipart.next_field().await? {

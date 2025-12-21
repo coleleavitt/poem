@@ -17,7 +17,7 @@ impl RouteGrpc {
     /// Add a GRPC service
     pub fn add_service<S>(mut self, service: S) -> Self
     where
-        S: IntoEndpoint<Endpoint = BoxEndpoint<'static, Response>> + Service,
+        S: IntoEndpoint<Endpoint = BoxEndpoint<'static, (), Response>> + Service,
     {
         self.route = self.route.nest(format!("/{}", S::NAME), service);
         self

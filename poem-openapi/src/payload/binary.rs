@@ -103,7 +103,7 @@ impl ParsePayload for Binary<Vec<u8>> {
     const IS_REQUIRED: bool = true;
 
     async fn from_request(request: &Request, body: &mut RequestBody) -> Result<Self> {
-        Ok(Self(<Vec<u8>>::from_request(request, body).await?))
+        Ok(Self(<Vec<u8>>::from_request(request, body, &()).await?))
     }
 }
 
@@ -111,7 +111,7 @@ impl ParsePayload for Binary<Bytes> {
     const IS_REQUIRED: bool = true;
 
     async fn from_request(request: &Request, body: &mut RequestBody) -> Result<Self> {
-        Ok(Self(Bytes::from_request(request, body).await?))
+        Ok(Self(Bytes::from_request(request, body, &()).await?))
     }
 }
 
@@ -119,7 +119,7 @@ impl ParsePayload for Binary<Body> {
     const IS_REQUIRED: bool = true;
 
     async fn from_request(request: &Request, body: &mut RequestBody) -> Result<Self> {
-        Ok(Self(Body::from_request(request, body).await?))
+        Ok(Self(Body::from_request(request, body, &()).await?))
     }
 }
 

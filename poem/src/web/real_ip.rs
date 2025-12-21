@@ -8,8 +8,8 @@ use crate::{Addr, FromRequest, Request, RequestBody, Result};
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct RealIp(pub Option<IpAddr>);
 
-impl<'a> FromRequest<'a> for RealIp {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for RealIp {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         if let Some(real_ip) = req
             .headers()
             .get("x-real-ip")
@@ -71,27 +71,30 @@ mod tests {
     #[tokio::test]
     async fn test_realip_extractor() {
         assert_eq!(
-            RealIp::from_request_without_body(&create_request("x-real-ip", "203.0.113.195"))
+            RealIp::from_request_without_body(&create_request("x-real-ip", "203.0.113.195"), &())
                 .await
                 .unwrap(),
             RealIp(Some("203.0.113.195".parse().unwrap()))
         );
 
         assert_eq!(
-            RealIp::from_request_without_body(&create_request(
-                "x-forwarded-for",
-                "203.0.113.195, 70.41.3.18, 150.172.238.178"
-            ))
+            RealIp::from_request_without_body(
+                &create_request(
+                    "x-forwarded-for",
+                    "203.0.113.195, 70.41.3.18, 150.172.238.178"
+                ),
+                &()
+            )
             .await
             .unwrap(),
             RealIp(Some("203.0.113.195".parse().unwrap()))
         );
 
         assert_eq!(
-            RealIp::from_request_without_body(&create_request(
-                "forwarded",
-                "for=192.0.2.43, for=198.51.100.17"
-            ))
+            RealIp::from_request_without_body(
+                &create_request("forwarded", "for=192.0.2.43, for=198.51.100.17"),
+                &()
+            )
             .await
             .unwrap(),
             RealIp(Some("192.0.2.43".parse().unwrap()))

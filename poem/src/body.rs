@@ -192,7 +192,7 @@ impl Body {
     /// # Example
     ///
     /// ```
-    /// use poem::{Body, Endpoint, Request, Result, error::ReadBodyError, handler, http::StatusCode};
+    /// use poem::{Body, Endpoint, IntoResponse, Request, Result, error::ReadBodyError, handler, http::StatusCode};
     ///
     /// #[handler]
     /// async fn index(data: Body) -> Result<()> {
@@ -201,13 +201,13 @@ impl Body {
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
     /// let req = Request::builder().body("12345");
-    /// assert_eq!(index.get_response(req).await.status(), StatusCode::OK);
+    /// let result = Endpoint::<()>::call(&index, req, &()).await;
+    /// assert_eq!(result.unwrap().into_response().status(), StatusCode::OK);
     ///
     /// let req = Request::builder().body("123456");
-    /// assert_eq!(
-    ///     index.get_response(req).await.status(),
-    ///     StatusCode::PAYLOAD_TOO_LARGE
-    /// );
+    /// let result = Endpoint::<()>::call(&index, req, &()).await;
+    /// // Handler returns an error which gets converted to an error response
+    /// assert_eq!(result.unwrap_err().into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
     /// # });
     /// ```
     pub async fn into_bytes_limit(self, limit: usize) -> Result<Bytes, ReadBodyError> {

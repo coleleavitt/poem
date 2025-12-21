@@ -194,6 +194,41 @@ struct Node<T> {
 }
 
 impl<T> Node<T> {
+    /// Transform all data items in this node and its children using the provided function.
+    fn map<U, F>(self, f: F) -> Node<U>
+    where
+        F: Fn(T) -> U + Clone,
+    {
+        Node {
+            node_type: self.node_type,
+            name: self.name,
+            children: self
+                .children
+                .into_iter()
+                .map(|child| child.map(f.clone()))
+                .collect(),
+            indices: self.indices,
+            re: self.re,
+            param_children: self
+                .param_children
+                .into_iter()
+                .map(|child| Box::new(child.map(f.clone())))
+                .collect(),
+            catch_all_child: self
+                .catch_all_child
+                .map(|child| Box::new(child.map(f.clone()))),
+            regex_children: self
+                .regex_children
+                .into_iter()
+                .map(|child| Box::new(child.map(f.clone())))
+                .collect(),
+            data: self.data.map(|node_data| NodeData {
+                data: f(node_data.data),
+                pattern: node_data.pattern,
+            }),
+        }
+    }
+
     fn find_static_child(&self, prefix: u8) -> Option<usize> {
         (0..self.indices.len()).find(|&i| self.indices[i] == prefix)
     }
@@ -475,6 +510,17 @@ impl<T> Default for RadixTree<T> {
 }
 
 impl<T> RadixTree<T> {
+    /// Transform all data items in the tree using the provided function.
+    /// Returns a new tree with transformed data.
+    pub(crate) fn map<U, F>(self, f: F) -> RadixTree<U>
+    where
+        F: Fn(T) -> U + Clone,
+    {
+        RadixTree {
+            root: self.root.map(f),
+        }
+    }
+
     pub(crate) fn add(&mut self, path: &str, data: T) -> Result<(), RouteError> {
         let raw_segments = match parse_path_segments(path.as_bytes()) {
             Ok(raw_segments) => raw_segments,

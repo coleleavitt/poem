@@ -21,7 +21,7 @@ impl SizeLimit {
     }
 }
 
-impl<E: Endpoint> Middleware<E> for SizeLimit {
+impl<E: Endpoint<S>, S: Send + Sync> Middleware<E, S> for SizeLimit {
     type Output = SizeLimitEndpoint<E>;
 
     fn transform(&self, ep: E) -> Self::Output {
@@ -38,10 +38,10 @@ pub struct SizeLimitEndpoint<E> {
     max_size: usize,
 }
 
-impl<E: Endpoint> Endpoint for SizeLimitEndpoint<E> {
+impl<E: Endpoint<S>, S: Send + Sync> Endpoint<S> for SizeLimitEndpoint<E> {
     type Output = E::Output;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
         let content_length = req
             .headers()
             .typed_get::<headers::ContentLength>()
@@ -51,7 +51,7 @@ impl<E: Endpoint> Endpoint for SizeLimitEndpoint<E> {
             return Err(SizedLimitError::PayloadTooLarge.into());
         }
 
-        self.inner.call(req).await
+        self.inner.call(req, state).await
     }
 }
 

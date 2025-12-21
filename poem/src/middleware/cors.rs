@@ -204,7 +204,7 @@ impl Cors {
     }
 }
 
-impl<E: Endpoint> Middleware<E> for Cors {
+impl<E: Endpoint<S>, S: Send + Sync> Middleware<E, S> for Cors {
     type Output = CorsEndpoint<E>;
 
     fn transform(&self, ep: E) -> Self::Output {
@@ -242,7 +242,7 @@ pub struct CorsEndpoint<E> {
     max_age: i32,
 }
 
-impl<E: Endpoint> CorsEndpoint<E> {
+impl<E> CorsEndpoint<E> {
     fn is_valid_origin(&self, origin: &HeaderValue) -> (bool, bool) {
         if self.allow_origins.contains(origin) {
             return (true, false);
@@ -348,15 +348,15 @@ impl<E: Endpoint> CorsEndpoint<E> {
     }
 }
 
-impl<E: Endpoint> Endpoint for CorsEndpoint<E> {
+impl<E: Endpoint<S>, S: Send + Sync> Endpoint<S> for CorsEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
         let origin = match req.headers().get(header::ORIGIN) {
             Some(origin) => origin.clone(),
             None => {
                 // This is not a CORS request if there is no Origin header
-                return self.inner.call(req).await.map(IntoResponse::into_response);
+                return self.inner.call(req, state).await.map(IntoResponse::into_response);
             }
         };
 
@@ -391,7 +391,11 @@ impl<E: Endpoint> Endpoint for CorsEndpoint<E> {
             return Ok(self.build_preflight_response(&origin, request_headers));
         }
 
-        let mut resp = self.inner.get_response(req).await;
+        // Call the inner endpoint and convert to response (handling errors by converting them)
+        let mut resp = match self.inner.call(req, state).await {
+            Ok(output) => output.into_response(),
+            Err(err) => err.into_response(),
+        };
 
         resp.headers_mut()
             .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);

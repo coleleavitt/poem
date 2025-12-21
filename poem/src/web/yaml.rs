@@ -106,8 +106,8 @@ impl<T> DerefMut for Yaml<T> {
     }
 }
 
-impl<'a, T: DeserializeOwned> FromRequest<'a> for Yaml<T> {
-    async fn from_request(req: &'a Request, body: &mut RequestBody) -> Result<Self> {
+impl<'a, T: DeserializeOwned, S: Send + Sync> FromRequest<'a, S> for Yaml<T> {
+    async fn from_request(req: &'a Request, body: &mut RequestBody, _state: &S) -> Result<Self> {
         let content_type = req
             .headers()
             .get(header::CONTENT_TYPE)

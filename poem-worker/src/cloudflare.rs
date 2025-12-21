@@ -79,8 +79,8 @@ impl CloudflareProperties {
     }
 }
 
-impl<'a> FromRequest<'a> for CloudflareProperties {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self, poem::Error> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for CloudflareProperties {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self, poem::Error> {
         let cf = req.data::<Cf>().ok_or_else(|| {
             poem::Error::from_string(
                 "failed to get incoming cloudflare properties",

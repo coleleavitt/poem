@@ -134,7 +134,7 @@ impl Reflection {
     /// Build a reflection service
     pub fn build(
         self,
-    ) -> impl IntoEndpoint<Endpoint = BoxEndpoint<'static, poem::Response>> + Service {
+    ) -> impl IntoEndpoint<Endpoint = BoxEndpoint<'static, (), poem::Response>> + Service {
         let mut this = self.add_file_descriptor_set(FILE_DESCRIPTOR_SET);
 
         let fd_iter = std::mem::take(&mut this.file_descriptor_sets)

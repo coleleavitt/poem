@@ -11,7 +11,7 @@ use crate::{
 #[derive(Default)]
 pub struct Tracing;
 
-impl<E: Endpoint> Middleware<E> for Tracing {
+impl<E: Endpoint<S>, S: Send + Sync> Middleware<E, S> for Tracing {
     type Output = TracingEndpoint<E>;
 
     fn transform(&self, ep: E) -> Self::Output {
@@ -24,11 +24,11 @@ pub struct TracingEndpoint<E> {
     inner: E,
 }
 
-impl<E: Endpoint> Endpoint for TracingEndpoint<E> {
+impl<E: Endpoint<S>, S: Send + Sync> Endpoint<S> for TracingEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
-        let remote_addr = RealIp::from_request_without_body(&req)
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
+        let remote_addr = RealIp::from_request_without_body(&req, &())
             .await
             .ok()
             .and_then(|real_ip| real_ip.0)
@@ -82,7 +82,7 @@ impl<E: Endpoint> Endpoint for TracingEndpoint<E> {
 
         async move {
             let now = Instant::now();
-            let res = self.inner.call(req).await;
+            let res = self.inner.call(req, state).await;
             let duration = now.elapsed();
 
             match res {

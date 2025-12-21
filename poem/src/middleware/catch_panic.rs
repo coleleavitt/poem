@@ -111,7 +111,7 @@ impl<H> CatchPanic<H> {
     }
 }
 
-impl<E: Endpoint, H: PanicHandler> Middleware<E> for CatchPanic<H> {
+impl<E: Endpoint<S>, H: PanicHandler, S: Send + Sync> Middleware<E, S> for CatchPanic<H> {
     type Output = CatchPanicEndpoint<E, H>;
 
     fn transform(&self, ep: E) -> Self::Output {
@@ -128,11 +128,11 @@ pub struct CatchPanicEndpoint<E, H> {
     panic_handler: H,
 }
 
-impl<E: Endpoint, H: PanicHandler> Endpoint for CatchPanicEndpoint<E, H> {
+impl<E: Endpoint<S>, H: PanicHandler, S: Send + Sync> Endpoint<S> for CatchPanicEndpoint<E, H> {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
-        match AssertUnwindSafe(self.inner.call(req)).catch_unwind().await {
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
+        match AssertUnwindSafe(self.inner.call(req, state)).catch_unwind().await {
             Ok(resp) => resp.map(IntoResponse::into_response),
             Err(err) => Ok(self.panic_handler.get_response(err).into_response()),
         }
