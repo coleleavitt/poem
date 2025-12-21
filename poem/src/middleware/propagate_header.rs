@@ -30,7 +30,7 @@ impl PropagateHeader {
     }
 }
 
-impl<E: Endpoint> Middleware<E> for PropagateHeader {
+impl<E: Endpoint<S>, S: Send + Sync> Middleware<E, S> for PropagateHeader {
     type Output = PropagateHeaderEndpoint<E>;
 
     fn transform(&self, ep: E) -> Self::Output {
@@ -47,10 +47,10 @@ pub struct PropagateHeaderEndpoint<E> {
     headers: HashSet<HeaderName>,
 }
 
-impl<E: Endpoint> Endpoint for PropagateHeaderEndpoint<E> {
+impl<E: Endpoint<S>, S: Send + Sync> Endpoint<S> for PropagateHeaderEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
         let mut headers = HeaderMap::new();
 
         for header in &self.headers {
@@ -59,7 +59,7 @@ impl<E: Endpoint> Endpoint for PropagateHeaderEndpoint<E> {
             }
         }
 
-        let mut resp = self.inner.call(req).await?.into_response();
+        let mut resp = self.inner.call(req, state).await?.into_response();
         resp.headers_mut().extend(headers);
         Ok(resp)
     }
@@ -75,7 +75,8 @@ mod tests {
         #[handler(internal)]
         fn index() {}
 
-        let cli = TestClient::new(index.with(PropagateHeader::new().header("x-request-id")));
+        let ep = EndpointExt::<()>::with(index, PropagateHeader::new().header("x-request-id"));
+        let cli = TestClient::new(ep);
         let resp = cli.get("/").header("x-request-id", "100").send().await;
         resp.assert_status_is_ok();
         resp.assert_header("x-request-id", "100");

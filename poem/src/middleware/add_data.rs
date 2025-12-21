@@ -12,10 +12,11 @@ impl<T: Clone + Send + Sync + 'static> AddData<T> {
     }
 }
 
-impl<E, T> Middleware<E> for AddData<T>
+impl<E, T, S> Middleware<E, S> for AddData<T>
 where
-    E: Endpoint,
+    E: Endpoint<S>,
     T: Clone + Send + Sync + 'static,
+    S: Send + Sync,
 {
     type Output = AddDataEndpoint<E, T>;
 
@@ -33,16 +34,17 @@ pub struct AddDataEndpoint<E, T> {
     value: T,
 }
 
-impl<E, T> Endpoint for AddDataEndpoint<E, T>
+impl<E, T, S> Endpoint<S> for AddDataEndpoint<E, T>
 where
-    E: Endpoint,
+    E: Endpoint<S>,
     T: Clone + Send + Sync + 'static,
+    S: Send + Sync,
 {
     type Output = E::Output;
 
-    async fn call(&self, mut req: Request) -> Result<Self::Output> {
+    async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
         req.extensions_mut().insert(self.value.clone());
-        self.inner.call(req).await
+        self.inner.call(req, state).await
     }
 }
 
@@ -58,7 +60,9 @@ mod tests {
             assert_eq!(req.extensions().get::<i32>(), Some(&100));
         }
 
-        let cli = TestClient::new(index.with(AddData::new(100i32)));
+        // Explicitly specify state type () for the endpoint chain
+        let ep = EndpointExt::<()>::with(index, AddData::new(100i32));
+        let cli = TestClient::new(ep);
         cli.get("/").send().await.assert_status_is_ok();
     }
 }

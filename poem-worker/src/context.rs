@@ -23,8 +23,8 @@ impl Context {
     }
 }
 
-impl<'a> FromRequest<'a> for Context {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> poem::Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for Context {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> poem::Result<Self> {
         let ctx = req.data::<Context>().ok_or_else(|| {
             poem::Error::from_string("failed to get incoming context", StatusCode::BAD_REQUEST)
         })?;

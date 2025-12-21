@@ -110,8 +110,8 @@ fn from_lambda_request(req: LambdaRequest) -> Request {
     req
 }
 
-impl<'a> FromRequest<'a> for &'a Context {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for &'a Context {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         let ctx = match req.extensions().get::<Context>() {
             Some(ctx) => ctx,
             None => panic!("Lambda runtime is required."),

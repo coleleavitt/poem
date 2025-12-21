@@ -22,7 +22,7 @@ use crate::{FromRequest, Request, RequestBody, Result, error::GetDataError};
 /// }
 ///
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-/// let app = Route::new().at("/", get(index)).data(10i32);
+/// let app = Route::<()>::new().at("/", get(index)).data(10i32);
 /// let resp = app.get_response(Request::default()).await;
 /// assert_eq!(resp.status(), StatusCode::OK);
 /// # });
@@ -37,8 +37,8 @@ impl<T> Deref for Data<T> {
     }
 }
 
-impl<'a, T: Send + Sync + 'static> FromRequest<'a> for Data<&'a T> {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, T: Send + Sync + 'static, S: Send + Sync> FromRequest<'a, S> for Data<&'a T> {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(Data(
             req.extensions()
                 .get::<T>()
@@ -61,7 +61,7 @@ mod tests {
             assert_eq!(value.0, &100);
         }
 
-        let app = index.with(AddData::new(100i32));
+        let app = EndpointExt::<()>::with(index, AddData::new(100i32));
         TestClient::new(app)
             .get("/")
             .send()
@@ -90,7 +90,8 @@ mod tests {
             assert_eq!(value.to_uppercase(), "ABC");
         }
 
-        TestClient::new(index.with(AddData::new("abc".to_string())))
+        let app = EndpointExt::<()>::with(index, AddData::new("abc".to_string()));
+        TestClient::new(app)
             .get("/")
             .send()
             .await

@@ -38,9 +38,10 @@ impl ForceHttps {
     }
 }
 
-impl<E> Middleware<E> for ForceHttps
+impl<E, S> Middleware<E, S> for ForceHttps
 where
-    E: Endpoint,
+    E: Endpoint<S>,
+    S: Send + Sync,
 {
     type Output = ForceHttpsEndpoint<E>;
 
@@ -60,13 +61,14 @@ pub struct ForceHttpsEndpoint<E> {
     filter_fn: Option<FilterFn>,
 }
 
-impl<E> Endpoint for ForceHttpsEndpoint<E>
+impl<E, S> Endpoint<S> for ForceHttpsEndpoint<E>
 where
-    E: Endpoint,
+    E: Endpoint<S>,
+    S: Send + Sync,
 {
     type Output = Response;
 
-    async fn call(&self, mut req: Request) -> Result<Self::Output> {
+    async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
         if req.scheme() == &Scheme::HTTP && self.filter_fn.as_ref().map(|f| f(&req)).unwrap_or(true)
         {
             if let Some(host) = req.headers().get(header::HOST).cloned() {
@@ -84,7 +86,7 @@ where
             }
         }
 
-        self.inner.call(req).await.map(IntoResponse::into_response)
+        self.inner.call(req, state).await.map(IntoResponse::into_response)
     }
 }
 

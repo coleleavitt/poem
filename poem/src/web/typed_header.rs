@@ -64,8 +64,8 @@ impl<T: Header> TypedHeader<T> {
     }
 }
 
-impl<'a, T: Header> FromRequest<'a> for TypedHeader<T> {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync, T: Header> FromRequest<'a, S> for TypedHeader<T> {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Self::internal_from_request(req).await.map_err(Into::into)
     }
 }
@@ -99,7 +99,7 @@ mod tests {
     #[tokio::test]
     async fn test_typed_header_extractor_error() {
         let (req, mut body) = Request::builder().body("abc").split();
-        let res = TypedHeader::<Host>::from_request(&req, &mut body).await;
+        let res = TypedHeader::<Host>::from_request(&req, &mut body, &()).await;
 
         match res.unwrap_err().downcast_ref::<ParseTypedHeaderError>() {
             Some(ParseTypedHeaderError::HeaderRequired(name)) if name == "host" => {}

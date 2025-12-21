@@ -251,7 +251,7 @@ pub trait ApiExtractor<'a>: Sized {
     ) -> impl Future<Output = Result<Self>> + Send;
 }
 
-impl<'a, T: FromRequest<'a>> ApiExtractor<'a> for T {
+impl<'a, T: FromRequest<'a, ()>> ApiExtractor<'a> for T {
     const TYPES: &'static [ApiExtractorType] = &[ApiExtractorType::PoemExtractor];
 
     type ParamType = ();
@@ -264,7 +264,7 @@ impl<'a, T: FromRequest<'a>> ApiExtractor<'a> for T {
     ) -> Result<Self> {
         // FIXME: remove the unnecessary boxed
         // https://github.com/rust-lang/rust/issues/100013
-        T::from_request(request, body).boxed().await
+        T::from_request(request, body, &()).boxed().await
     }
 }
 

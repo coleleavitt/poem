@@ -13,42 +13,56 @@ use crate::{
 };
 
 /// An HTTP request handler.
-pub trait Endpoint: Send + Sync {
+///
+/// The type parameter `S` represents the state type that this endpoint receives.
+/// - `Endpoint<()>` (or just `Endpoint` with default) is the standard form used by handlers
+/// - `Endpoint<S>` can receive state of type S via the `call` method
+///
+/// # State Handling
+///
+/// Poem uses an extractor-based approach for state. Use [`EndpointExt::with_state`]
+/// to provide state that can be extracted via [`State`](crate::web::State):
+///
+/// ```
+/// use poem::{Route, EndpointExt, get, handler, web::State, test::TestClient};
+///
+/// #[derive(Clone)]
+/// struct AppState { value: i32 }
+///
+/// #[handler]
+/// fn index(State(state): State<AppState>) -> String {
+///     format!("{}", state.value)
+/// }
+///
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+/// let app = Route::new()
+///     .at("/", get(index))
+///     .with_state(AppState { value: 42 });
+///
+/// let resp = TestClient::new(app).get("/").send().await;
+/// resp.assert_status_is_ok();
+/// resp.assert_text("42").await;
+/// # });
+/// ```
+pub trait Endpoint<S = ()>: Send + Sync {
     /// Represents the response of the endpoint.
     type Output: IntoResponse;
 
     /// Get the response to the request.
-    fn call(&self, req: Request) -> impl Future<Output = Result<Self::Output>> + Send;
+    fn call(&self, req: Request, state: &S) -> impl Future<Output = Result<Self::Output>> + Send;
 
     /// Get the response to the request and return a [`Response`].
     ///
     /// Unlike [`Endpoint::call`], when an error occurs, it will also convert
     /// the error into a response object.
     ///
-    /// # Example
-    ///
-    /// ```
-    /// use poem::{
-    ///     Endpoint, Request, Result, error::NotFoundError, handler, http::StatusCode,
-    ///     test::TestClient,
-    /// };
-    ///
-    /// #[handler]
-    /// fn index() -> Result<()> {
-    ///     Err(NotFoundError.into())
-    /// }
-    ///
-    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-    /// TestClient::new(index)
-    ///     .get("/")
-    ///     .send()
-    ///     .await
-    ///     .assert_status(StatusCode::NOT_FOUND);
-    /// # });
-    /// ```
-    fn get_response(&self, req: Request) -> impl Future<Output = Response> + Send {
+    /// Note: This method is only available for `Endpoint<()>`.
+    fn get_response(&self, req: Request) -> impl Future<Output = Response> + Send
+    where
+        S: Default + Send,
+    {
         async move {
-            self.call(req)
+            self.call(req, &S::default())
                 .await
                 .map(IntoResponse::into_response)
                 .unwrap_or_else(|err| err.into_response())
@@ -69,7 +83,7 @@ where
 {
     type Output = T;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, _state: &()) -> Result<Self::Output> {
         (self.f)(req).into_result()
     }
 }
@@ -88,7 +102,7 @@ where
 {
     type Output = T;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, _state: &()) -> Result<Self::Output> {
         (self.f)(req).await.into_result()
     }
 }
@@ -102,17 +116,18 @@ pub enum EitherEndpoint<A, B> {
     B(B),
 }
 
-impl<A, B> Endpoint for EitherEndpoint<A, B>
+impl<S, A, B> Endpoint<S> for EitherEndpoint<A, B>
 where
-    A: Endpoint,
-    B: Endpoint,
+    S: Send + Sync,
+    A: Endpoint<S>,
+    B: Endpoint<S>,
 {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
         match self {
-            EitherEndpoint::A(a) => a.call(req).await.map(IntoResponse::into_response),
-            EitherEndpoint::B(b) => b.call(req).await.map(IntoResponse::into_response),
+            EitherEndpoint::A(a) => a.call(req, state).await.map(IntoResponse::into_response),
+            EitherEndpoint::B(b) => b.call(req, state).await.map(IntoResponse::into_response),
         }
     }
 }
@@ -178,75 +193,123 @@ where
     }
 }
 
-impl<T: Endpoint + ?Sized> Endpoint for &T {
+impl<S, T: Endpoint<S> + ?Sized> Endpoint<S> for &T
+where
+    S: Send + Sync,
+{
     type Output = T::Output;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
-        T::call(self, req).await
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
+        T::call(self, req, state).await
     }
 }
 
-impl<T: Endpoint + ?Sized> Endpoint for Box<T> {
+impl<S, T: Endpoint<S> + ?Sized> Endpoint<S> for Box<T>
+where
+    S: Send + Sync,
+{
     type Output = T::Output;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
-        self.as_ref().call(req).await
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
+        self.as_ref().call(req, state).await
     }
 }
 
-impl<T: Endpoint + ?Sized> Endpoint for Arc<T> {
+impl<S, T: Endpoint<S> + ?Sized> Endpoint<S> for Arc<T>
+where
+    S: Send + Sync,
+{
     type Output = T::Output;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
-        self.as_ref().call(req).await
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
+        self.as_ref().call(req, state).await
     }
 }
 
 /// A `endpoint` that can be dynamically dispatched.
-pub trait DynEndpoint: Send + Sync {
+pub trait DynEndpoint<S = ()>: Send + Sync {
     /// Represents the response of the endpoint.
     type Output: IntoResponse;
 
     /// Get the response to the request.
-    fn call(&self, req: Request) -> BoxFuture<'_, Result<Self::Output>>;
+    fn call<'a>(&'a self, req: Request, state: &'a S) -> BoxFuture<'a, Result<Self::Output>>;
 }
 
 /// A [`Endpoint`] wrapper used to implement [`DynEndpoint`].
 pub struct ToDynEndpoint<E>(pub E);
 
-impl<E> DynEndpoint for ToDynEndpoint<E>
+impl<S, E> DynEndpoint<S> for ToDynEndpoint<E>
 where
-    E: Endpoint,
+    S: Send + Sync,
+    E: Endpoint<S>,
 {
     type Output = E::Output;
 
     #[inline]
-    fn call(&self, req: Request) -> BoxFuture<'_, Result<Self::Output>> {
-        self.0.call(req).boxed()
+    fn call<'a>(&'a self, req: Request, state: &'a S) -> BoxFuture<'a, Result<Self::Output>> {
+        self.0.call(req, state).boxed()
     }
 }
 
-impl<T> Endpoint for dyn DynEndpoint<Output = T> + '_
+impl<S, T> Endpoint<S> for dyn DynEndpoint<S, Output = T> + '_
 where
+    S: Send + Sync,
     T: IntoResponse,
 {
     type Output = T;
 
     #[inline]
-    async fn call(&self, req: Request) -> Result<Self::Output> {
-        DynEndpoint::call(self, req).await
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
+        DynEndpoint::call(self, req, state).await
     }
 }
 
-/// An owned dynamically typed `Endpoint` for use in cases where you can’t
+/// An owned dynamically typed `Endpoint` for use in cases where you can't
 /// statically type your result or need to add some indirection.
-pub type BoxEndpoint<'a, T = Response> = Box<dyn DynEndpoint<Output = T> + 'a>;
+pub type BoxEndpoint<'a, S = (), T = Response> = Box<dyn DynEndpoint<S, Output = T> + 'a>;
+
+/// Endpoint wrapper that provides state to an inner endpoint.
+///
+/// This is created by [`EndpointExt::with_state`].
+///
+/// `WithState<E, S>` wraps an `Endpoint<S>` (which requires state of type `S`)
+/// and produces an `Endpoint<()>` (which requires no external state). The state
+/// is captured and provided to the inner endpoint on each call.
+pub struct WithState<E, S> {
+    inner: E,
+    state: S,
+}
+
+impl<E, S> WithState<E, S> {
+    /// Create a new `WithState` endpoint.
+    pub fn new(inner: E, state: S) -> Self {
+        Self { inner, state }
+    }
+}
+
+impl<E, S> Endpoint<()> for WithState<E, S>
+where
+    E: Endpoint<S>,
+    S: Clone + Send + Sync + 'static,
+{
+    type Output = E::Output;
+
+    async fn call(&self, mut req: Request, _state: &()) -> Result<Self::Output> {
+        // Store the state in request extensions so State<T> can extract it
+        // This is for backward compatibility with the State<T> extractor
+        req.extensions_mut()
+            .insert(crate::web::StateData(self.state.clone()));
+        // Pass our captured state to the inner endpoint
+        self.inner.call(req, &self.state).await
+    }
+}
 
 /// Extension trait for [`Endpoint`].
-pub trait EndpointExt: IntoEndpoint {
+pub trait EndpointExt<S = ()>: IntoEndpoint<S> {
     /// Wrap the endpoint in a Box.
-    fn boxed<'a>(self) -> BoxEndpoint<'a, <Self::Endpoint as Endpoint>::Output>
+    fn boxed<'a>(self) -> BoxEndpoint<'a, S, <Self::Endpoint as Endpoint<S>>::Output>
     where
+        S: Send + Sync + 'static,
         Self: Sized + 'a,
     {
         Box::new(ToDynEndpoint(self.into_endpoint()))
@@ -278,7 +341,7 @@ pub trait EndpointExt: IntoEndpoint {
     /// ```
     fn with<T>(self, middleware: T) -> T::Output
     where
-        T: Middleware<Self::Endpoint>,
+        T: Middleware<Self::Endpoint, S>,
         Self: Sized,
     {
         middleware.transform(self.into_endpoint())
@@ -322,7 +385,7 @@ pub trait EndpointExt: IntoEndpoint {
     /// ```
     fn with_if<T>(self, enable: bool, middleware: T) -> EitherEndpoint<Self, T::Output>
     where
-        T: Middleware<Self::Endpoint>,
+        T: Middleware<Self::Endpoint, S>,
         Self: Sized,
     {
         if !enable {
@@ -347,7 +410,8 @@ pub trait EndpointExt: IntoEndpoint {
     /// }
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-    /// let resp = TestClient::new(index.data(100i32)).get("/").send().await;
+    /// let ep = EndpointExt::<()>::data(index, 100i32);
+    /// let resp = TestClient::new(ep).get("/").send().await;
     /// resp.assert_status_is_ok();
     /// resp.assert_text("100").await;
     /// # });
@@ -355,6 +419,7 @@ pub trait EndpointExt: IntoEndpoint {
     fn data<T>(self, data: T) -> AddDataEndpoint<Self::Endpoint, T>
     where
         T: Clone + Send + Sync + 'static,
+        S: Send + Sync,
         Self: Sized,
     {
         self.with(AddData::new(data))
@@ -367,12 +432,103 @@ pub trait EndpointExt: IntoEndpoint {
     ) -> EitherEndpoint<AddDataEndpoint<Self::Endpoint, T>, Self>
     where
         T: Clone + Send + Sync + 'static,
+        S: Send + Sync,
         Self: Sized,
     {
         match data {
             Some(data) => EitherEndpoint::A(AddData::new(data).transform(self.into_endpoint())),
             None => EitherEndpoint::B(self),
         }
+    }
+
+    /// Provide state for this endpoint, transforming `Endpoint<S>` into `Endpoint<()>`.
+    ///
+    /// This is the key method for compile-time state verification. An endpoint that
+    /// requires state `S` cannot be served until `.with_state(state)` is called.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use poem::{
+    ///     Endpoint, EndpointExt, Request, handler, http::StatusCode, test::TestClient, web::State,
+    /// };
+    ///
+    /// #[derive(Clone)]
+    /// struct AppState {
+    ///     value: i32,
+    /// }
+    ///
+    /// #[handler]
+    /// async fn index(State(state): State<AppState>) -> String {
+    ///     format!("{}", state.value)
+    /// }
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let resp = TestClient::new(index.with_state(AppState { value: 42 }))
+    ///     .get("/")
+    ///     .send()
+    ///     .await;
+    /// resp.assert_status_is_ok();
+    /// resp.assert_text("42").await;
+    /// # });
+    /// ```
+    ///
+    /// # Extracting Substates
+    ///
+    /// You can extract substates by implementing [`FromRef`](crate::web::FromRef):
+    ///
+    /// ```
+    /// use poem::{
+    ///     Endpoint, EndpointExt, Request, handler,
+    ///     http::StatusCode,
+    ///     test::TestClient,
+    ///     web::{FromRef, State},
+    /// };
+    ///
+    /// #[derive(Clone)]
+    /// struct AppState {
+    ///     db: DbState,
+    /// }
+    ///
+    /// #[derive(Clone)]
+    /// struct DbState {
+    ///     connection: String,
+    /// }
+    ///
+    /// impl FromRef<AppState> for DbState {
+    ///     fn from_ref(state: &AppState) -> Self {
+    ///         state.db.clone()
+    ///     }
+    /// }
+    ///
+    /// #[handler]
+    /// async fn use_db(State(db): State<DbState>) -> String {
+    ///     db.connection.clone()
+    /// }
+    ///
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let state = AppState {
+    ///     db: DbState {
+    ///         connection: "postgres://localhost".to_string(),
+    ///     },
+    /// };
+    /// // Use FromRef to derive the substate
+    /// let db_state = DbState::from_ref(&state);
+    /// let ep = EndpointExt::<DbState>::with_state(use_db, db_state);
+    /// let resp = TestClient::new(ep)
+    ///     .get("/")
+    ///     .send()
+    ///     .await;
+    /// resp.assert_status_is_ok();
+    /// resp.assert_text("postgres://localhost").await;
+    /// # });
+    /// ```
+    fn with_state<T>(self, state: T) -> WithState<Self::Endpoint, T>
+    where
+        T: Clone + Send + Sync + 'static,
+        Self: Sized,
+    {
+        WithState::new(self.into_endpoint(), state)
     }
 
     /// Maps the request of this endpoint.
@@ -390,14 +546,11 @@ pub trait EndpointExt: IntoEndpoint {
     /// }
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-    /// let mut resp = index
-    ///     .before(|mut req| async move {
-    ///         req.set_body("abc");
-    ///         Ok(req)
-    ///     })
-    ///     .call(Request::default())
-    ///     .await
-    ///     .unwrap();
+    /// let ep = EndpointExt::<()>::before(index, |mut req| async move {
+    ///     req.set_body("abc");
+    ///     Ok(req)
+    /// });
+    /// let mut resp = ep.call(Request::default(), &()).await.unwrap();
     /// assert_eq!(resp.take_body().into_string().await.unwrap(), "abc");
     /// # });
     /// ```
@@ -423,22 +576,19 @@ pub trait EndpointExt: IntoEndpoint {
     /// }
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-    /// let mut resp = index
-    ///     .after(|res| async move {
-    ///         match res {
-    ///             Ok(resp) => Ok(resp.into_body().into_string().await.unwrap() + "def"),
-    ///             Err(err) => Err(err),
-    ///         }
-    ///     })
-    ///     .call(Request::default())
-    ///     .await
-    ///     .unwrap();
+    /// let ep = EndpointExt::<()>::after(index, |res| async move {
+    ///     match res {
+    ///         Ok(resp) => Ok(resp.into_body().into_string().await.unwrap() + "def"),
+    ///         Err(err) => Err(err),
+    ///     }
+    /// });
+    /// let resp = ep.call(Request::default(), &()).await.unwrap();
     /// assert_eq!(resp, "abcdef");
     /// # });
     /// ```
     fn after<F, Fut, T>(self, f: F) -> After<Self::Endpoint, F>
     where
-        F: Fn(Result<<Self::Endpoint as Endpoint>::Output>) -> Fut + Send + Sync,
+        F: Fn(Result<<Self::Endpoint as Endpoint<S>>::Output>) -> Fut + Send + Sync,
         Fut: Future<Output = Result<T>> + Send,
         T: IntoResponse,
         Self: Sized,
@@ -452,7 +602,7 @@ pub trait EndpointExt: IntoEndpoint {
     ///
     /// ```
     /// use poem::{
-    ///     Endpoint, EndpointExt, Error, Request, Result, handler,
+    ///     Endpoint, EndpointExt, Error, Request, Response, Result, handler,
     ///     http::{HeaderMap, HeaderValue, StatusCode},
     /// };
     ///
@@ -467,24 +617,25 @@ pub trait EndpointExt: IntoEndpoint {
     /// }
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-    /// let mut resp = index
-    ///     .around(|ep, mut req| async move {
+    /// let resp: String = index
+    ///     .around(|ep, mut req, state: ()| async move {
     ///         req.headers_mut()
     ///             .insert("x-value", HeaderValue::from_static("hello"));
-    ///         let mut resp = ep.call(req).await?;
+    ///         let mut resp: Response = ep.call(req, &state).await?;
     ///         Ok(resp.take_body().into_string().await.unwrap() + "world")
     ///     })
-    ///     .call(Request::default())
+    ///     .call(Request::default(), &())
     ///     .await
     ///     .unwrap();
     /// assert_eq!(resp, "hello,world");
     /// # });
     /// ```
-    fn around<F, Fut, R>(self, f: F) -> Around<Self::Endpoint, F>
+    fn around<F, Fut, R>(self, f: F) -> Around<Self::Endpoint, F, S>
     where
-        F: Fn(Arc<Self::Endpoint>, Request) -> Fut + Send + Sync + 'static,
+        F: Fn(Arc<Self::Endpoint>, Request, S) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<R>> + Send + 'static,
         R: IntoResponse,
+        S: Clone + Send + Sync + 'static,
         Self: Sized,
     {
         Around::new(self.into_endpoint(), f)
@@ -505,14 +656,14 @@ pub trait EndpointExt: IntoEndpoint {
     ///     .map_to_response();
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-    /// let resp = ep1.call(Request::default()).await.unwrap();
+    /// let resp = ep1.call(Request::default(), &()).await.unwrap();
     /// assert_eq!(resp.into_body().into_string().await.unwrap(), "hello");
     ///
-    /// let err = ep2.call(Request::default()).await.unwrap_err();
+    /// let err = ep2.call(Request::default(), &()).await.unwrap_err();
     /// assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
     /// # });
     /// ```
-    fn map_to_response(self) -> MapToResponse<Self::Endpoint>
+    fn map_to_response(self) -> MapToResponse<Self::Endpoint, S>
     where
         Self: Sized,
     {
@@ -538,14 +689,14 @@ pub trait EndpointExt: IntoEndpoint {
     ///     .to_response();
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-    /// let resp = ep1.call(Request::default()).await.unwrap();
+    /// let resp = ep1.call(Request::default(), &()).await.unwrap();
     /// assert_eq!(resp.into_body().into_string().await.unwrap(), "hello");
     ///
-    /// let resp = ep2.call(Request::default()).await.unwrap();
+    /// let resp = ep2.call(Request::default(), &()).await.unwrap();
     /// assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     /// # });
     /// ```
-    fn to_response(self) -> ToResponse<Self::Endpoint>
+    fn to_response(self) -> ToResponse<Self::Endpoint, S>
     where
         Self: Sized,
     {
@@ -564,18 +715,18 @@ pub trait EndpointExt: IntoEndpoint {
     /// let ep = make(|_| async { "hello" }).map(|value| async move { format!("{}, world!", value) });
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-    /// let mut resp: String = ep.call(Request::default()).await.unwrap();
+    /// let mut resp: String = ep.call(Request::default(), &()).await.unwrap();
     /// assert_eq!(resp, "hello, world!");
     /// # });
     /// ```
-    fn map<F, Fut, R, R2>(self, f: F) -> Map<Self::Endpoint, F>
+    fn map<F, Fut, R, R2>(self, f: F) -> Map<Self::Endpoint, F, S>
     where
         F: Fn(R) -> Fut + Send + Sync,
         Fut: Future<Output = R2> + Send,
         R: IntoResponse,
         R2: IntoResponse,
         Self: Sized,
-        Self::Endpoint: Endpoint<Output = R> + Sized,
+        Self::Endpoint: Endpoint<S, Output = R> + Sized,
     {
         Map::new(self.into_endpoint(), f)
     }
@@ -596,21 +747,21 @@ pub trait EndpointExt: IntoEndpoint {
     ///     .and_then(|value| async move { Ok(format!("{}, world!", value)) });
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-    /// let resp: String = ep1.call(Request::default()).await.unwrap();
+    /// let resp: String = ep1.call(Request::default(), &()).await.unwrap();
     /// assert_eq!(resp, "hello, world!");
     ///
-    /// let err: Error = ep2.call(Request::default()).await.unwrap_err();
+    /// let err: Error = ep2.call(Request::default(), &()).await.unwrap_err();
     /// assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
     /// # });
     /// ```
-    fn and_then<F, Fut, R, R2>(self, f: F) -> AndThen<Self::Endpoint, F>
+    fn and_then<F, Fut, R, R2>(self, f: F) -> AndThen<Self::Endpoint, F, S>
     where
         F: Fn(R) -> Fut + Send + Sync,
         Fut: Future<Output = Result<R2>> + Send,
         R: IntoResponse,
         R2: IntoResponse,
         Self: Sized,
-        Self::Endpoint: Endpoint<Output = R> + Sized,
+        Self::Endpoint: Endpoint<S, Output = R> + Sized,
     {
         AndThen::new(self.into_endpoint(), f)
     }
@@ -647,7 +798,7 @@ pub trait EndpointExt: IntoEndpoint {
     ///
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
     /// let resp = app
-    ///     .call(Request::builder().uri(Uri::from_static("/abc")).finish())
+    ///     .call(Request::builder().uri(Uri::from_static("/abc")).finish(), &())
     ///     .await
     ///     .unwrap();
     /// assert_eq!(resp.status(), StatusCode::OK);
@@ -657,7 +808,7 @@ pub trait EndpointExt: IntoEndpoint {
     /// );
     /// # })
     /// ```
-    fn catch_all_error<F, Fut, R>(self, f: F) -> CatchAllError<Self, F, R>
+    fn catch_all_error<F, Fut, R>(self, f: F) -> CatchAllError<Self, F, R, S>
     where
         F: Fn(Error) -> Fut + Send + Sync,
         Fut: Future<Output = R> + Send,
@@ -690,7 +841,7 @@ pub trait EndpointExt: IntoEndpoint {
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
     ///
     /// let resp = app
-    ///     .call(Request::builder().uri(Uri::from_static("/abc")).finish())
+    ///     .call(Request::builder().uri(Uri::from_static("/abc")).finish(), &())
     ///     .await
     ///     .unwrap();
     /// assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -700,7 +851,7 @@ pub trait EndpointExt: IntoEndpoint {
     /// );
     /// # })
     /// ```
-    fn catch_error<F, Fut, R, ErrType>(self, f: F) -> CatchError<Self, F, R, ErrType>
+    fn catch_error<F, Fut, R, ErrType>(self, f: F) -> CatchError<Self, F, R, ErrType, S>
     where
         F: Fn(ErrType) -> Fut + Send + Sync,
         Fut: Future<Output = R> + Send,
@@ -721,11 +872,11 @@ pub trait EndpointExt: IntoEndpoint {
     /// #[handler]
     /// fn index() {}
     ///
-    /// let app = Route::new().at("/", index).inspect_all_err(|err| {
+    /// let app = Route::<()>::new().at("/", index).inspect_all_err(|err| {
     ///     println!("error: {}", err);
     /// });
     /// ```
-    fn inspect_all_err<F>(self, f: F) -> InspectAllError<Self, F>
+    fn inspect_all_err<F>(self, f: F) -> InspectAllError<Self, F, S>
     where
         F: Fn(&Error) + Send + Sync,
         Self: Sized,
@@ -743,13 +894,13 @@ pub trait EndpointExt: IntoEndpoint {
     /// #[handler]
     /// fn index() {}
     ///
-    /// let app = Route::new()
+    /// let app = Route::<()>::new()
     ///     .at("/", index)
     ///     .inspect_err(|err: &NotFoundError| {
     ///         println!("error: {}", err);
     ///     });
     /// ```
-    fn inspect_err<F, ErrType>(self, f: F) -> InspectError<Self, F, ErrType>
+    fn inspect_err<F, ErrType>(self, f: F) -> InspectError<Self, F, ErrType, S>
     where
         F: Fn(&ErrType) + Send + Sync,
         ErrType: std::error::Error + Send + Sync + 'static,
@@ -759,18 +910,18 @@ pub trait EndpointExt: IntoEndpoint {
     }
 }
 
-impl<T: IntoEndpoint> EndpointExt for T {}
+impl<S, T: IntoEndpoint<S>> EndpointExt<S> for T {}
 
 /// Represents a type that can convert into endpoint.
-pub trait IntoEndpoint {
+pub trait IntoEndpoint<S = ()> {
     /// Represents the endpoint type.
-    type Endpoint: Endpoint;
+    type Endpoint: Endpoint<S>;
 
     /// Converts this object into endpoint.
     fn into_endpoint(self) -> Self::Endpoint;
 }
 
-impl<T: Endpoint> IntoEndpoint for T {
+impl<S, T: Endpoint<S>> IntoEndpoint<S> for T {
     type Endpoint = T;
 
     fn into_endpoint(self) -> Self::Endpoint {
@@ -796,7 +947,7 @@ mod test {
     async fn test_make() {
         let ep = make(|req| async move { format!("method={}", req.method()) }).map_to_response();
         let mut resp = ep
-            .call(Request::builder().method(Method::DELETE).finish())
+            .call(Request::builder().method(Method::DELETE).finish(), &())
             .await
             .unwrap();
         assert_eq!(
@@ -813,7 +964,7 @@ mod test {
                     req.set_method(Method::POST);
                     Ok(req)
                 })
-                .call(Request::default())
+                .call(Request::default(), &())
                 .await
                 .unwrap(),
             "POST"
@@ -825,7 +976,7 @@ mod test {
         assert_eq!(
             make_sync(|_| "abc")
                 .after(|_| async { Ok::<_, Error>("def") })
-                .call(Request::default())
+                .call(Request::default(), &())
                 .await
                 .unwrap(),
             "def"
@@ -837,7 +988,7 @@ mod test {
         assert_eq!(
             make_sync(|_| "abc")
                 .map_to_response()
-                .call(Request::default())
+                .call(Request::default(), &())
                 .await
                 .unwrap()
                 .take_body()
@@ -853,7 +1004,7 @@ mod test {
         assert_eq!(
             make_sync(|_| "abc")
                 .and_then(|resp| async move { Ok(resp.to_string() + "def") })
-                .call(Request::default())
+                .call(Request::default(), &())
                 .await
                 .unwrap(),
             "abcdef"
@@ -871,7 +1022,7 @@ mod test {
         assert_eq!(
             make_sync(|_| "abc")
                 .map(|resp| async move { resp.to_string() + "def" })
-                .call(Request::default())
+                .call(Request::default(), &())
                 .await
                 .unwrap(),
             "abcdef"
@@ -888,12 +1039,12 @@ mod test {
     async fn test_around() {
         let ep = make(|req| async move { req.into_body().into_string().await.unwrap() + "b" });
         assert_eq!(
-            ep.around(|ep, mut req| async move {
+            ep.around(|ep, mut req, _state: ()| async move {
                 req.set_body("a");
-                let resp = ep.call(req).await?;
+                let resp = ep.call(req, &()).await?;
                 Ok(resp + "c")
             })
-            .call(Request::default())
+            .call(Request::default(), &())
             .await
             .unwrap(),
             "abc"
@@ -904,7 +1055,7 @@ mod test {
     async fn test_with_if() {
         let resp = make_sync(|_| ())
             .with_if(true, SetHeader::new().appending("a", 1))
-            .call(Request::default())
+            .call(Request::default(), &())
             .await
             .unwrap();
         assert_eq!(
@@ -914,7 +1065,7 @@ mod test {
 
         let resp = make_sync(|_| ())
             .with_if(false, SetHeader::new().appending("a", 1))
-            .call(Request::default())
+            .call(Request::default(), &())
             .await
             .unwrap();
         assert_eq!(resp.headers().get("a"), None);
@@ -937,7 +1088,7 @@ mod test {
         let app = Route::new().nest("/api", MyEndpointFactory);
 
         assert_eq!(
-            app.call(Request::builder().uri(Uri::from_static("/api/a")).finish())
+            app.call(Request::builder().uri(Uri::from_static("/api/a")).finish(), &())
                 .await
                 .unwrap()
                 .take_body()
@@ -948,7 +1099,7 @@ mod test {
         );
 
         assert_eq!(
-            app.call(Request::builder().uri(Uri::from_static("/api/b")).finish())
+            app.call(Request::builder().uri(Uri::from_static("/api/b")).finish(), &())
                 .await
                 .unwrap()
                 .take_body()
@@ -969,12 +1120,14 @@ mod test {
             }
         }
 
-        let cli = TestClient::new(index.data_opt(Some(100)));
+        let ep = EndpointExt::<()>::data_opt(index, Some(100));
+        let cli = TestClient::new(ep);
         let resp = cli.get("/").send().await;
         resp.assert_status_is_ok();
         resp.assert_text("100").await;
 
-        let cli = TestClient::new(index.data_opt(None::<i32>));
+        let ep = EndpointExt::<()>::data_opt(index, None::<i32>);
+        let cli = TestClient::new(ep);
         let resp = cli.get("/").send().await;
         resp.assert_status_is_ok();
         resp.assert_text("none").await;

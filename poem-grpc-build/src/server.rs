@@ -150,7 +150,7 @@ pub(crate) fn generate(config: &GrpcConfig, service: &Service, buf: &mut String)
         }
 
         impl<T: #service_ident> ::poem::IntoEndpoint for #server_ident<T> {
-            type Endpoint = ::poem::endpoint::BoxEndpoint<'static, ::poem::Response>;
+            type Endpoint = ::poem::endpoint::BoxEndpoint<'static, (), ::poem::Response>;
 
             #[allow(clippy::redundant_clone)]
             #[allow(clippy::let_and_return)]

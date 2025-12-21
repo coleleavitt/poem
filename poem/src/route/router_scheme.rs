@@ -75,16 +75,16 @@ impl RouteScheme {
 impl Endpoint for RouteScheme {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> crate::Result<Self::Output> {
+    async fn call(&self, req: Request, state: &()) -> crate::Result<Self::Output> {
         match self
             .schemes
             .iter()
             .find(|(scheme, _)| scheme == req.scheme())
             .map(|(_, ep)| ep)
         {
-            Some(ep) => ep.call(req).await,
+            Some(ep) => ep.call(req, state).await,
             None => match &self.fallback {
-                Some(ep) => ep.call(req).await,
+                Some(ep) => ep.call(req, state).await,
                 None => Err(NotFoundError.into()),
             },
         }

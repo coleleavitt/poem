@@ -79,8 +79,8 @@ impl Env {
     }
 }
 
-impl<'a> FromRequest<'a> for Env {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> poem::Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for Env {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> poem::Result<Self> {
         let env = req.data::<Env>().ok_or_else(|| {
             poem::Error::from_string("failed to get incoming env", StatusCode::BAD_REQUEST)
         })?;

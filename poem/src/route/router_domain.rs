@@ -90,14 +90,14 @@ impl RouteDomain {
 impl Endpoint for RouteDomain {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, state: &()) -> Result<Self::Output> {
         let host = req
             .headers()
             .get(header::HOST)
             .and_then(|host| host.to_str().ok())
             .unwrap_or_default();
         match self.tree.matches(host) {
-            Some(ep) => ep.call(req).await,
+            Some(ep) => ep.call(req, state).await,
             None => Err(NotFoundError.into()),
         }
     }

@@ -106,7 +106,7 @@ impl proto::Health for HealthService {
 
 /// Create health service and [`HealthReporter`]
 pub fn health_service() -> (
-    impl IntoEndpoint<Endpoint = BoxEndpoint<'static, poem::Response>> + Service,
+    impl IntoEndpoint<Endpoint = BoxEndpoint<'static, (), poem::Response>> + Service,
     HealthReporter,
 ) {
     let (sender, receiver) = tokio::sync::watch::channel(Default::default());

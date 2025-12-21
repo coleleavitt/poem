@@ -239,7 +239,7 @@ impl GrpcClient {
 
         let mut resp = self
             .ep
-            .call(http_request)
+            .call(http_request, &())
             .await
             .map_err(|err| Status::new(Code::Internal).with_message(err))?;
 
@@ -288,7 +288,7 @@ impl GrpcClient {
 
         let mut resp = self
             .ep
-            .call(http_request)
+            .call(http_request, &())
             .await
             .map_err(|err| Status::new(Code::Internal).with_message(err))?;
 
@@ -337,7 +337,7 @@ impl GrpcClient {
 
         let mut resp = self
             .ep
-            .call(http_request)
+            .call(http_request, &())
             .await
             .map_err(|err| Status::new(Code::Internal).with_message(err))?;
 
@@ -382,7 +382,7 @@ impl GrpcClient {
 
         let mut resp = self
             .ep
-            .call(http_request)
+            .call(http_request, &())
             .await
             .map_err(|err| Status::new(Code::Internal).with_message(err))?;
 

@@ -69,8 +69,8 @@ impl<T: DeserializeOwned> Query<T> {
     }
 }
 
-impl<'a, T: DeserializeOwned> FromRequest<'a> for Query<T> {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, T: DeserializeOwned, S: Send + Sync> FromRequest<'a, S> for Query<T> {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Self::internal_from_request(req).await.map_err(Into::into)
     }
 }

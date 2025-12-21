@@ -19,6 +19,7 @@ mod redirect;
 #[cfg(feature = "sse")]
 #[cfg_attr(docsrs, doc(cfg(feature = "sse")))]
 pub mod sse;
+mod state;
 #[cfg(feature = "static-files")]
 mod static_file;
 #[cfg(feature = "tempfile")]
@@ -69,6 +70,7 @@ pub use self::{
     query::Query,
     real_ip::RealIp,
     redirect::Redirect,
+    state::{FromRef, State, StateData},
     typed_header::TypedHeader,
 };
 use crate::{
@@ -280,8 +282,8 @@ impl RequestBody {
 ///
 /// struct Token(String);
 ///
-/// impl<'a> FromRequest<'a> for Token {
-///     async fn from_request(req: &'a Request, body: &mut RequestBody) -> Result<Self> {
+/// impl<'a, S: Send + Sync> FromRequest<'a, S> for Token {
+///     async fn from_request(req: &'a Request, body: &mut RequestBody, _state: &S) -> Result<Self> {
 ///         let token = req
 ///             .headers()
 ///             .get("MyToken")
@@ -296,7 +298,7 @@ impl RequestBody {
 ///     assert_eq!(token.0, "token123");
 /// }
 ///
-/// let app = Route::new().at("/", get(index));
+/// let app = Route::<()>::new().at("/", get(index));
 /// let cli = TestClient::new(app);
 ///
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
@@ -307,14 +309,22 @@ impl RequestBody {
 ///     .assert_status_is_ok();
 /// # });
 /// ```
-pub trait FromRequest<'a>: Sized {
-    /// Extract from request head and body.
+///
+/// # State Parameter
+///
+/// The `S` type parameter represents the application state type. Most extractors
+/// don't need state and can use a blanket implementation over any `S`. The
+/// [`State`] extractor uses this parameter to ensure compile-time verification
+/// that the required state has been provided.
+pub trait FromRequest<'a, S: Sync = ()>: Sized {
+    /// Extract from request head, body, and state.
     fn from_request(
         req: &'a Request,
         body: &mut RequestBody,
+        state: &S,
     ) -> impl Future<Output = Result<Self>> + Send;
 
-    /// Extract from request head.
+    /// Extract from request head and state.
     ///
     /// If you know that this type does not need to extract the body, then you
     /// can just use it.
@@ -323,11 +333,11 @@ pub trait FromRequest<'a>: Sized {
     /// request head, using this method would be more convenient.
     /// `String`,`Vec<u8>` they extract the body of the request, using this
     /// method will cause `ReadBodyError` error.
-    fn from_request_without_body(req: &'a Request) -> impl Future<Output = Result<Self>> + Send {
+    fn from_request_without_body(req: &'a Request, state: &S) -> impl Future<Output = Result<Self>> + Send {
         async move {
             // FIXME: remove the unnecessary boxed
             // https://github.com/rust-lang/rust/issues/100013
-            Self::from_request(req, &mut Default::default())
+            Self::from_request(req, &mut Default::default(), state)
                 .boxed()
                 .await
         }
@@ -736,86 +746,86 @@ impl<T: Into<String> + Send> IntoResponse for Html<T> {
     }
 }
 
-impl<'a> FromRequest<'a> for &'a Request {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for &'a Request {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(req)
     }
 }
 
-impl<'a> FromRequest<'a> for &'a Uri {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for &'a Uri {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(req.uri())
     }
 }
 
-impl<'a> FromRequest<'a> for Method {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for Method {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(req.method().clone())
     }
 }
 
-impl<'a> FromRequest<'a> for Version {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for Version {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(req.version())
     }
 }
 
-impl<'a> FromRequest<'a> for &'a HeaderMap {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for &'a HeaderMap {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(req.headers())
     }
 }
 
-impl<'a> FromRequest<'a> for Body {
-    async fn from_request(_req: &'a Request, body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for Body {
+    async fn from_request(_req: &'a Request, body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(body.take()?)
     }
 }
 
-impl<'a> FromRequest<'a> for String {
-    async fn from_request(_req: &'a Request, body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for String {
+    async fn from_request(_req: &'a Request, body: &mut RequestBody, _state: &S) -> Result<Self> {
         let data = body.take()?.into_bytes().await?;
         Ok(String::from_utf8(data.to_vec()).map_err(ReadBodyError::Utf8)?)
     }
 }
 
-impl<'a> FromRequest<'a> for Bytes {
-    async fn from_request(_req: &'a Request, body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for Bytes {
+    async fn from_request(_req: &'a Request, body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(body.take()?.into_bytes().await?)
     }
 }
 
-impl<'a> FromRequest<'a> for Vec<u8> {
-    async fn from_request(_req: &'a Request, body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for Vec<u8> {
+    async fn from_request(_req: &'a Request, body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(body.take()?.into_vec().await?)
     }
 }
 
-impl<'a> FromRequest<'a> for &'a RemoteAddr {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for &'a RemoteAddr {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(&req.state().remote_addr)
     }
 }
 
-impl<'a> FromRequest<'a> for &'a LocalAddr {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for &'a LocalAddr {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(&req.state().local_addr)
     }
 }
 
-impl<'a, T: FromRequest<'a>> FromRequest<'a> for Option<T> {
-    async fn from_request(req: &'a Request, body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync, T: FromRequest<'a, S>> FromRequest<'a, S> for Option<T> {
+    async fn from_request(req: &'a Request, body: &mut RequestBody, state: &S) -> Result<Self> {
         // FIXME: remove the unnecessary boxed
         // https://github.com/rust-lang/rust/issues/100013
-        Ok(T::from_request(req, body).boxed().await.ok())
+        Ok(T::from_request(req, body, state).boxed().await.ok())
     }
 }
 
-impl<'a, T: FromRequest<'a>> FromRequest<'a> for Result<T> {
-    async fn from_request(req: &'a Request, body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync, T: FromRequest<'a, S>> FromRequest<'a, S> for Result<T> {
+    async fn from_request(req: &'a Request, body: &mut RequestBody, state: &S) -> Result<Self> {
         // FIXME: remove the unnecessary boxed
         // https://github.com/rust-lang/rust/issues/100013
-        Ok(T::from_request(req, body).boxed().await)
+        Ok(T::from_request(req, body, state).boxed().await)
     }
 }
 
@@ -985,13 +995,13 @@ mod tests {
 
         // Version
         assert_eq!(
-            Version::from_request(&req, &mut body).await.unwrap(),
+            Version::from_request(&req, &mut body, &()).await.unwrap(),
             Version::HTTP_11
         );
 
         // &HeaderMap
         assert_eq!(
-            <&HeaderMap>::from_request(&req, &mut body).await.unwrap(),
+            <&HeaderMap>::from_request(&req, &mut body, &()).await.unwrap(),
             &{
                 let mut headers = HeaderMap::new();
                 headers.append("Value1", HeaderValue::from_static("123"));
@@ -1002,25 +1012,25 @@ mod tests {
 
         // &Uri
         assert_eq!(
-            <&Uri>::from_request(&req, &mut body).await.unwrap(),
+            <&Uri>::from_request(&req, &mut body, &()).await.unwrap(),
             &Uri::from_static("http://example.com/a/b")
         );
 
         // &RemoteAddr
         assert_eq!(
-            <&RemoteAddr>::from_request(&req, &mut body).await.unwrap(),
+            <&RemoteAddr>::from_request(&req, &mut body, &()).await.unwrap(),
             &RemoteAddr(Addr::custom("test", "example"))
         );
 
         // &LocalAddr
         assert_eq!(
-            <&LocalAddr>::from_request(&req, &mut body).await.unwrap(),
+            <&LocalAddr>::from_request(&req, &mut body, &()).await.unwrap(),
             &LocalAddr(Addr::custom("test", "example-local"))
         );
 
         // &Method
         assert_eq!(
-            <Method>::from_request(&req, &mut body).await.unwrap(),
+            <Method>::from_request(&req, &mut body, &()).await.unwrap(),
             Method::DELETE
         );
 
@@ -1028,7 +1038,7 @@ mod tests {
         let req = request();
         let (req, mut body) = req.split();
         assert_eq!(
-            String::from_request(&req, &mut body).await.unwrap(),
+            String::from_request(&req, &mut body, &()).await.unwrap(),
             "abc".to_string()
         );
 
@@ -1036,7 +1046,7 @@ mod tests {
         let req = request();
         let (req, mut body) = req.split();
         assert_eq!(
-            <Vec<u8>>::from_request(&req, &mut body).await.unwrap(),
+            <Vec<u8>>::from_request(&req, &mut body, &()).await.unwrap(),
             b"abc"
         );
 
@@ -1044,7 +1054,7 @@ mod tests {
         let req = request();
         let (req, mut body) = req.split();
         assert_eq!(
-            Bytes::from_request(&req, &mut body).await.unwrap(),
+            Bytes::from_request(&req, &mut body, &()).await.unwrap(),
             Bytes::from_static(b"abc")
         );
     }

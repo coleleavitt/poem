@@ -106,7 +106,7 @@ impl AsResponse {
 /// # Create your own error type
 ///
 /// ```
-/// use poem::{Endpoint, Request, Result, error::ResponseError, handler, http::StatusCode};
+/// use poem::{Endpoint, IntoResponse, Request, Result, error::ResponseError, handler, http::StatusCode};
 ///
 /// #[derive(Debug, thiserror::Error)]
 /// #[error("my error")]
@@ -128,7 +128,8 @@ impl AsResponse {
 /// }
 ///
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-/// let resp = index.get_response(Request::default()).await;
+/// // Handler returns an error which gets converted to an error response
+/// let resp = Endpoint::<()>::call(&index, Request::default(), &()).await.unwrap_err().into_response();
 /// assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
 /// assert_eq!(resp.into_body().into_string().await.unwrap(), "my error");
 /// # });
@@ -137,7 +138,7 @@ impl AsResponse {
 /// # Custom error response
 ///
 /// ```
-/// use poem::{error::ResponseError, handler, http::StatusCode, Response, Result, Request, Body, Endpoint};
+/// use poem::{error::ResponseError, handler, http::StatusCode, IntoResponse, Response, Result, Request, Body, Endpoint};
 ///
 /// #[derive(Debug, thiserror::Error)]
 /// #[error("my error")]
@@ -167,7 +168,8 @@ impl AsResponse {
 /// }
 ///
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-/// let resp = index.get_response(Request::default()).await;
+/// // Handler returns an error which gets converted to an error response
+/// let resp = Endpoint::<()>::call(&index, Request::default(), &()).await.unwrap_err().into_response();
 /// assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
 /// assert_eq!(resp.into_body().into_json::<serde_json::Value>().await.unwrap(),
 /// serde_json::json!({

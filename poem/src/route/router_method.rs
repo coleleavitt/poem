@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::{future::Future, marker::PhantomData};
 
 use futures_util::{FutureExt, future::Either};
 
@@ -7,7 +7,9 @@ use crate::{
     error::MethodNotAllowedError, http::Method,
 };
 
-/// Routing object for HTTP methods
+/// Routing object for HTTP methods with compile-time state verification.
+///
+/// `RouteMethod<S>` requires state of type `S` to handle requests, similar to `Route<S>`.
 ///
 /// # Errors
 ///
@@ -32,7 +34,7 @@ use crate::{
 /// }
 ///
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-/// let route_method = RouteMethod::new().get(handle_get).post(handle_post);
+/// let route_method = RouteMethod::<()>::new().get(handle_get).post(handle_post);
 ///
 /// let resp = route_method
 ///     .get_response(Request::builder().method(Method::GET).finish())
@@ -52,22 +54,37 @@ use crate::{
 /// assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
 /// # });
 /// ```
-#[derive(Default)]
-pub struct RouteMethod {
-    methods: Vec<(Method, BoxEndpoint<'static>)>,
+pub struct RouteMethod<S = ()> {
+    methods: Vec<(Method, BoxEndpoint<'static, S>)>,
+    _marker: PhantomData<S>,
 }
 
-impl RouteMethod {
+impl<S> Default for RouteMethod<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<S> RouteMethod<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     /// Create a `RouteMethod` object.
     pub fn new() -> Self {
-        Default::default()
+        RouteMethod {
+            methods: Vec::new(),
+            _marker: PhantomData,
+        }
     }
 
     /// Sets the endpoint for the specified `method`.
     #[must_use]
     pub fn method<E>(mut self, method: Method, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.methods
@@ -79,7 +96,7 @@ impl RouteMethod {
     #[must_use]
     pub fn get<E>(self, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.method(Method::GET, ep)
@@ -89,7 +106,7 @@ impl RouteMethod {
     #[must_use]
     pub fn post<E>(self, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.method(Method::POST, ep)
@@ -99,7 +116,7 @@ impl RouteMethod {
     #[must_use]
     pub fn put<E>(self, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.method(Method::PUT, ep)
@@ -109,7 +126,7 @@ impl RouteMethod {
     #[must_use]
     pub fn delete<E>(self, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.method(Method::DELETE, ep)
@@ -119,7 +136,7 @@ impl RouteMethod {
     #[must_use]
     pub fn head<E>(self, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.method(Method::HEAD, ep)
@@ -129,7 +146,7 @@ impl RouteMethod {
     #[must_use]
     pub fn options<E>(self, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.method(Method::OPTIONS, ep)
@@ -139,7 +156,7 @@ impl RouteMethod {
     #[must_use]
     pub fn connect<E>(self, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.method(Method::CONNECT, ep)
@@ -149,7 +166,7 @@ impl RouteMethod {
     #[must_use]
     pub fn patch<E>(self, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.method(Method::PATCH, ep)
@@ -159,30 +176,34 @@ impl RouteMethod {
     #[must_use]
     pub fn trace<E>(self, ep: E) -> Self
     where
-        E: IntoEndpoint,
+        E: IntoEndpoint<S>,
         E::Endpoint: 'static,
     {
         self.method(Method::TRACE, ep)
     }
 }
 
-impl Endpoint for RouteMethod {
+impl<S> Endpoint<S> for RouteMethod<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     type Output = Response;
 
-    fn call(&self, mut req: Request) -> impl Future<Output = Result<Self::Output>> + Send {
+    fn call(&self, mut req: Request, state: &S) -> impl Future<Output = Result<Self::Output>> + Send {
+        let state_clone = state.clone();
         match self
             .methods
             .iter()
             .find(|(method, _)| method == req.method())
             .map(|(_, ep)| ep)
         {
-            Some(ep) => Either::Left(ep.call(req)),
+            Some(ep) => Either::Left(ep.call(req, state)),
             None => {
                 if req.method() == Method::HEAD {
                     Either::Right(Either::Left(
                         async move {
                             req.set_method(Method::GET);
-                            let mut resp = self.call(req).await?;
+                            let mut resp: Response = self.call(req, &state_clone).await?;
                             resp.set_body(());
                             Ok(resp)
                         }
@@ -197,82 +218,91 @@ impl Endpoint for RouteMethod {
 }
 
 /// A helper function, similar to `RouteMethod::new().get(ep)`.
-pub fn get<E>(ep: E) -> RouteMethod
+pub fn get<E, S>(ep: E) -> RouteMethod<S>
 where
-    E: IntoEndpoint,
+    E: IntoEndpoint<S>,
     E::Endpoint: 'static,
+    S: Clone + Send + Sync + 'static,
 {
     RouteMethod::new().get(ep)
 }
 
 /// A helper function, similar to `RouteMethod::new().post(ep)`.
-pub fn post<E>(ep: E) -> RouteMethod
+pub fn post<E, S>(ep: E) -> RouteMethod<S>
 where
-    E: IntoEndpoint,
+    E: IntoEndpoint<S>,
     E::Endpoint: 'static,
+    S: Clone + Send + Sync + 'static,
 {
     RouteMethod::new().post(ep)
 }
 
 /// A helper function, similar to `RouteMethod::new().put(ep)`.
-pub fn put<E>(ep: E) -> RouteMethod
+pub fn put<E, S>(ep: E) -> RouteMethod<S>
 where
-    E: IntoEndpoint,
+    E: IntoEndpoint<S>,
     E::Endpoint: 'static,
+    S: Clone + Send + Sync + 'static,
 {
     RouteMethod::new().put(ep)
 }
 
 /// A helper function, similar to `RouteMethod::new().delete(ep)`.
-pub fn delete<E>(ep: E) -> RouteMethod
+pub fn delete<E, S>(ep: E) -> RouteMethod<S>
 where
-    E: IntoEndpoint,
+    E: IntoEndpoint<S>,
     E::Endpoint: 'static,
+    S: Clone + Send + Sync + 'static,
 {
     RouteMethod::new().delete(ep)
 }
 
 /// A helper function, similar to `RouteMethod::new().head(ep)`.
-pub fn head<E>(ep: E) -> RouteMethod
+pub fn head<E, S>(ep: E) -> RouteMethod<S>
 where
-    E: IntoEndpoint,
+    E: IntoEndpoint<S>,
     E::Endpoint: 'static,
+    S: Clone + Send + Sync + 'static,
 {
     RouteMethod::new().head(ep)
 }
 
 /// A helper function, similar to `RouteMethod::new().options(ep)`.
-pub fn options<E>(ep: E) -> RouteMethod
+pub fn options<E, S>(ep: E) -> RouteMethod<S>
 where
-    E: IntoEndpoint,
+    E: IntoEndpoint<S>,
     E::Endpoint: 'static,
+    S: Clone + Send + Sync + 'static,
 {
     RouteMethod::new().options(ep)
 }
 
 /// A helper function, similar to `RouteMethod::new().connect(ep)`.
-pub fn connect<E>(ep: E) -> RouteMethod
+pub fn connect<E, S>(ep: E) -> RouteMethod<S>
 where
-    E: IntoEndpoint,
+    E: IntoEndpoint<S>,
     E::Endpoint: 'static,
+    S: Clone + Send + Sync + 'static,
 {
     RouteMethod::new().connect(ep)
 }
 
 /// A helper function, similar to `RouteMethod::new().patch(ep)`.
-pub fn patch<E>(ep: E) -> RouteMethod
+pub fn patch<E, S>(ep: E) -> RouteMethod<S>
 where
-    E: IntoEndpoint,
+    E: IntoEndpoint<S>,
     E::Endpoint: 'static,
+    S: Clone + Send + Sync + 'static,
 {
     RouteMethod::new().patch(ep)
 }
 
 /// A helper function, similar to `RouteMethod::new().trace(ep)`.
-pub fn trace<E>(ep: E) -> RouteMethod
+pub fn trace<E, S>(ep: E) -> RouteMethod<S>
 where
-    E: IntoEndpoint,
+    E: IntoEndpoint<S>,
     E::Endpoint: 'static,
+    S: Clone + Send + Sync + 'static,
 {
     RouteMethod::new().trace(ep)
 }
@@ -284,7 +314,7 @@ mod tests {
 
     #[tokio::test]
     async fn method_not_allowed() {
-        let resp = TestClient::new(RouteMethod::new()).get("/").send().await;
+        let resp = TestClient::new(RouteMethod::<()>::new()).get("/").send().await;
         resp.assert_status(StatusCode::METHOD_NOT_ALLOWED);
     }
 
@@ -306,7 +336,7 @@ mod tests {
             Method::PATCH,
             Method::TRACE,
         ] {
-            let route = RouteMethod::new().method(method.clone(), index).post(index);
+            let route: RouteMethod<()> = RouteMethod::new().method(method.clone(), index).post(index);
             let resp = TestClient::new(route)
                 .request(method.clone(), "/")
                 .send()
@@ -318,7 +348,7 @@ mod tests {
         macro_rules! test_method {
             ($(($id:ident, $method:ident)),*) => {
                 $(
-                let route = RouteMethod::new().$id(index).post(index);
+                let route: RouteMethod<()> = RouteMethod::new().$id(index).post(index);
                 let resp = TestClient::new(route).request(Method::$method, "/").send().await;
                 resp.assert_status_is_ok();
                 resp.assert_text("hello").await;
@@ -346,7 +376,7 @@ mod tests {
             "hello"
         }
 
-        let route = RouteMethod::new().get(index);
+        let route: RouteMethod<()> = RouteMethod::new().get(index);
         let resp = TestClient::new(route).head("/").send().await;
         resp.assert_status_is_ok();
         resp.assert_text("").await;

@@ -30,8 +30,8 @@ impl TempFile {
     }
 }
 
-impl<'a> FromRequest<'a> for TempFile {
-    async fn from_request(_req: &'a Request, body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Send + Sync> FromRequest<'a, S> for TempFile {
+    async fn from_request(_req: &'a Request, body: &mut RequestBody, _state: &S) -> Result<Self> {
         Self::internal_from_request(body).await.map_err(Into::into)
     }
 }
