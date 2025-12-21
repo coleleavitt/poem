@@ -53,7 +53,8 @@ fn with_discriminator() {
                 mapping: vec![
                     ("A".to_string(), "#/components/schemas/MyObj_A".to_string()),
                     ("B".to_string(), "#/components/schemas/MyObj_B".to_string()),
-                ]
+                ],
+                default_mapping: None,
             }),
             any_of: vec![
                 MetaSchemaRef::Reference("MyObj_A".to_string()),
@@ -189,7 +190,8 @@ fn with_discriminator_mapping() {
                 mapping: vec![
                     ("c".to_string(), "#/components/schemas/MyObj_A".to_string()),
                     ("d".to_string(), "#/components/schemas/MyObj_B".to_string()),
-                ]
+                ],
+                default_mapping: None,
             }),
             any_of: vec![
                 MetaSchemaRef::Reference("MyObj_A".to_string()),
@@ -567,7 +569,8 @@ fn rename_all() {
                         "putString".to_string(),
                         "#/components/schemas/MyObj_PutString".to_string()
                     ),
-                ]
+                ],
+                default_mapping: None,
             }),
             any_of: vec![
                 MetaSchemaRef::Reference("MyObj_PutInt".to_string()),

@@ -20,6 +20,9 @@ const fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// OpenAPI 3.2 Discriminator Object
+///
+/// New in 3.2.0: `default_mapping` field for fallback schema.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetaDiscriminatorObject {
@@ -29,6 +32,9 @@ pub struct MetaDiscriminatorObject {
         serialize_with = "serialize_mapping"
     )]
     pub mapping: Vec<(String, String)>,
+    /// Default schema reference when discriminator value is missing or unrecognized (OpenAPI 3.2+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_mapping: Option<&'static str>,
 }
 
 fn serialize_mapping<S: Serializer>(
@@ -42,93 +48,185 @@ fn serialize_mapping<S: Serializer>(
     s.end()
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// OpenAPI 3.2 Schema Object
+///
+/// Custom serialization is used to handle OpenAPI 3.1+ changes:
+/// - `nullable` is represented as a type array (e.g., `["string", "null"]`)
+/// - `exclusiveMinimum`/`exclusiveMaximum` are numeric values, not booleans
+#[derive(Debug, Clone, PartialEq)]
 pub struct MetaSchema {
-    #[serde(skip)]
     pub rust_typename: Option<&'static str>,
 
-    #[serde(rename = "type", skip_serializing_if = "str::is_empty")]
     pub ty: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub external_docs: Option<MetaExternalDocument>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub required: Vec<&'static str>,
-    #[serde(
-        skip_serializing_if = "Vec::is_empty",
-        serialize_with = "serialize_properties"
-    )]
     pub properties: Vec<(&'static str, MetaSchemaRef)>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub items: Option<Box<MetaSchemaRef>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub additional_properties: Option<Box<MetaSchemaRef>>,
-    #[serde(rename = "enum", skip_serializing_if = "Vec::is_empty")]
     pub enum_items: Vec<Value>,
-    #[serde(skip_serializing_if = "is_false")]
     pub deprecated: bool,
-    #[serde(skip_serializing_if = "is_false")]
     pub nullable: bool,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub any_of: Vec<MetaSchemaRef>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub one_of: Vec<MetaSchemaRef>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub all_of: Vec<MetaSchemaRef>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub discriminator: Option<MetaDiscriminatorObject>,
-    #[serde(skip_serializing_if = "is_false")]
     pub read_only: bool,
-    #[serde(skip_serializing_if = "is_false")]
     pub write_only: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub example: Option<Value>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub multiple_of: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub maximum: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclusive_maximum: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub minimum: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclusive_minimum: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_length: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub min_length: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_items: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub min_items: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub unique_items: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_properties: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub min_properties: Option<usize>,
 }
 
-fn serialize_properties<S: Serializer>(
-    properties: &[(&'static str, MetaSchemaRef)],
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    let mut s = serializer.serialize_map(None)?;
-    for item in properties {
-        s.serialize_entry(item.0, &item.1)?;
+impl Serialize for MetaSchema {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(None)?;
+
+        // Handle type field - in OpenAPI 3.1+, nullable is expressed as type array
+        if !self.ty.is_empty() {
+            if self.nullable {
+                map.serialize_entry("type", &[self.ty, "null"])?;
+            } else {
+                map.serialize_entry("type", self.ty)?;
+            }
+        }
+
+        if let Some(format) = &self.format {
+            map.serialize_entry("format", format)?;
+        }
+        if let Some(title) = &self.title {
+            map.serialize_entry("title", title)?;
+        }
+        if let Some(description) = &self.description {
+            map.serialize_entry("description", description)?;
+        }
+        if let Some(external_docs) = &self.external_docs {
+            map.serialize_entry("externalDocs", external_docs)?;
+        }
+        if let Some(default) = &self.default {
+            map.serialize_entry("default", default)?;
+        }
+        if !self.required.is_empty() {
+            map.serialize_entry("required", &self.required)?;
+        }
+        if !self.properties.is_empty() {
+            map.serialize_entry("properties", &PropertiesSerializer(&self.properties))?;
+        }
+        if let Some(items) = &self.items {
+            map.serialize_entry("items", items)?;
+        }
+        if let Some(additional_properties) = &self.additional_properties {
+            map.serialize_entry("additionalProperties", additional_properties)?;
+        }
+        if !self.enum_items.is_empty() {
+            map.serialize_entry("enum", &self.enum_items)?;
+        }
+        if self.deprecated {
+            map.serialize_entry("deprecated", &true)?;
+        }
+        if !self.any_of.is_empty() {
+            map.serialize_entry("anyOf", &self.any_of)?;
+        }
+        if !self.one_of.is_empty() {
+            map.serialize_entry("oneOf", &self.one_of)?;
+        }
+        if !self.all_of.is_empty() {
+            map.serialize_entry("allOf", &self.all_of)?;
+        }
+        if let Some(discriminator) = &self.discriminator {
+            map.serialize_entry("discriminator", discriminator)?;
+        }
+        if self.read_only {
+            map.serialize_entry("readOnly", &true)?;
+        }
+        if self.write_only {
+            map.serialize_entry("writeOnly", &true)?;
+        }
+        if let Some(example) = &self.example {
+            map.serialize_entry("example", example)?;
+        }
+        if let Some(multiple_of) = &self.multiple_of {
+            map.serialize_entry("multipleOf", multiple_of)?;
+        }
+
+        // Handle exclusive minimum/maximum - in OpenAPI 3.1+, these are numeric values
+        // In 3.0: {"minimum": 0, "exclusiveMinimum": true} means > 0
+        // In 3.1+: {"exclusiveMinimum": 0} means > 0
+        match (self.minimum, self.exclusive_minimum) {
+            (Some(min), Some(true)) => {
+                map.serialize_entry("exclusiveMinimum", &min)?;
+            }
+            (Some(min), _) => {
+                map.serialize_entry("minimum", &min)?;
+            }
+            _ => {}
+        }
+
+        match (self.maximum, self.exclusive_maximum) {
+            (Some(max), Some(true)) => {
+                map.serialize_entry("exclusiveMaximum", &max)?;
+            }
+            (Some(max), _) => {
+                map.serialize_entry("maximum", &max)?;
+            }
+            _ => {}
+        }
+
+        if let Some(max_length) = &self.max_length {
+            map.serialize_entry("maxLength", max_length)?;
+        }
+        if let Some(min_length) = &self.min_length {
+            map.serialize_entry("minLength", min_length)?;
+        }
+        if let Some(pattern) = &self.pattern {
+            map.serialize_entry("pattern", pattern)?;
+        }
+        if let Some(max_items) = &self.max_items {
+            map.serialize_entry("maxItems", max_items)?;
+        }
+        if let Some(min_items) = &self.min_items {
+            map.serialize_entry("minItems", min_items)?;
+        }
+        if let Some(unique_items) = &self.unique_items {
+            map.serialize_entry("uniqueItems", unique_items)?;
+        }
+        if let Some(max_properties) = &self.max_properties {
+            map.serialize_entry("maxProperties", max_properties)?;
+        }
+        if let Some(min_properties) = &self.min_properties {
+            map.serialize_entry("minProperties", min_properties)?;
+        }
+
+        map.end()
     }
-    s.end()
+}
+
+/// Helper struct to serialize properties as a map
+struct PropertiesSerializer<'a>(&'a [(&'static str, MetaSchemaRef)]);
+
+impl Serialize for PropertiesSerializer<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (name, schema) in self.0 {
+            map.serialize_entry(name, schema)?;
+        }
+        map.end()
+    }
 }
 
 impl MetaSchema {
@@ -468,9 +566,17 @@ pub struct MetaHeader {
     pub schema: MetaSchemaRef,
 }
 
+/// OpenAPI 3.2 Response Object
+///
+/// New in 3.2.0: `summary` field and `description` is now optional.
 #[derive(Debug, PartialEq, Serialize)]
 pub struct MetaResponse {
-    pub description: &'static str,
+    /// Brief summary of the response (OpenAPI 3.2+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<&'static str>,
+    /// Description is now optional in OpenAPI 3.2.0
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'static str>,
     #[serde(skip)]
     pub status: Option<u16>,
     #[serde(skip)]
@@ -584,9 +690,15 @@ pub struct MetaInfo {
     pub license: Option<MetaLicense>,
 }
 
+/// OpenAPI 3.2 Server Object
+///
+/// New in 3.2.0: `name` field for server identification.
 #[derive(Debug, Eq, PartialEq, Serialize, Clone)]
 pub struct MetaServer {
     pub url: String,
+    /// Server name for identification (OpenAPI 3.2+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
@@ -612,14 +724,26 @@ pub struct MetaExternalDocument {
     pub description: Option<String>,
 }
 
+/// OpenAPI 3.2 Tag Object
+///
+/// New in 3.2.0: `summary`, `parent`, and `kind` fields for multipurpose tags.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetaTag {
     pub name: &'static str,
+    /// A brief summary of the tag (OpenAPI 3.2+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_docs: Option<MetaExternalDocument>,
+    /// Parent tag name for hierarchical tag organization (OpenAPI 3.2+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<&'static str>,
+    /// Tag kind for categorization (e.g., "nav", "audience") (OpenAPI 3.2+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<&'static str>,
 }
 
 impl PartialEq for MetaTag {
@@ -654,6 +778,9 @@ pub struct MetaOAuthScope {
     pub description: Option<&'static str>,
 }
 
+/// OpenAPI 3.2 OAuth Flow Object
+///
+/// New in 3.2.0: `device_authorization_url` for Device Authorization Grant flow.
 #[derive(Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetaOAuthFlow {
@@ -663,6 +790,9 @@ pub struct MetaOAuthFlow {
     pub token_url: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_url: Option<&'static str>,
+    /// Device authorization URL for Device Authorization Grant (OpenAPI 3.2+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_authorization_url: Option<&'static str>,
     #[serde(
         skip_serializing_if = "Vec::is_empty",
         serialize_with = "serialize_oauth_flow_scopes"
@@ -681,6 +811,9 @@ fn serialize_oauth_flow_scopes<S: Serializer>(
     s.end()
 }
 
+/// OpenAPI 3.2 OAuth Flows Object
+///
+/// New in 3.2.0: `device_authorization` for Device Authorization Grant flow.
 #[derive(Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetaOAuthFlows {
@@ -692,8 +825,14 @@ pub struct MetaOAuthFlows {
     pub client_credentials: Option<MetaOAuthFlow>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization_code: Option<MetaOAuthFlow>,
+    /// Device Authorization Grant flow (OpenAPI 3.2+)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_authorization: Option<MetaOAuthFlow>,
 }
 
+/// OpenAPI 3.2 Security Scheme Object
+///
+/// New in 3.2.0: `oauth2_metadata_url` for OAuth 2.0 Server Metadata.
 #[derive(Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MetaSecurityScheme {
@@ -713,6 +852,9 @@ pub struct MetaSecurityScheme {
     pub flows: Option<MetaOAuthFlows>,
     #[serde(rename = "openIdConnectUrl", skip_serializing_if = "Option::is_none")]
     pub openid_connect_url: Option<&'static str>,
+    /// OAuth 2.0 Server Metadata URL (OpenAPI 3.2+)
+    #[serde(rename = "oauth2MetadataUrl", skip_serializing_if = "Option::is_none")]
+    pub oauth2_metadata_url: Option<&'static str>,
 }
 
 #[derive(Debug, PartialEq)]

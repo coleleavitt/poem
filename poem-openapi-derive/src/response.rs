@@ -42,6 +42,9 @@ struct ResponseItem {
     headers: Vec<ExtraHeader>,
     #[darling(default)]
     actual_type: Option<Type>,
+    /// Brief summary of the response (OpenAPI 3.2+)
+    #[darling(default)]
+    summary: Option<String>,
 }
 
 #[derive(FromDeriveInput)]
@@ -93,6 +96,7 @@ pub(crate) fn generate(args: DeriveInput) -> GeneratorResult<TokenStream> {
         // Use get_description_token to support #[doc = include_str!(...)]
         let item_description = get_description_token(&variant.attrs)?;
         let item_description = optional_literal_token(item_description);
+        let item_summary = optional_literal_string(&variant.summary);
         let (values, headers) = parse_fields(&variant.fields)?;
 
         let mut match_headers = Vec::new();
@@ -211,7 +215,8 @@ pub(crate) fn generate(args: DeriveInput) -> GeneratorResult<TokenStream> {
                 });
                 responses_meta.push(quote! {
                     #crate_name::registry::MetaResponse {
-                        description: #item_description.unwrap_or_default(),
+                        summary: #item_summary,
+                        description: #item_description,
                         status: ::std::option::Option::None,
                         status_range: ::std::option::Option::Some(#status_range),
                         content: {
@@ -244,7 +249,8 @@ pub(crate) fn generate(args: DeriveInput) -> GeneratorResult<TokenStream> {
                 });
                 responses_meta.push(quote! {
                     #crate_name::registry::MetaResponse {
-                        description: #item_description.unwrap_or_default(),
+                        summary: #item_summary,
+                        description: #item_description,
                         status: ::std::option::Option::None,
                         status_range: ::std::option::Option::Some(#status_range),
                         content: ::std::vec![],
@@ -274,7 +280,8 @@ pub(crate) fn generate(args: DeriveInput) -> GeneratorResult<TokenStream> {
                 });
                 responses_meta.push(quote! {
                     #crate_name::registry::MetaResponse {
-                        description: #item_description.unwrap_or_default(),
+                        summary: #item_summary,
+                        description: #item_description,
                         status: ::std::option::Option::None,
                         status_range: ::std::option::Option::None,
                         content: {
@@ -315,7 +322,8 @@ pub(crate) fn generate(args: DeriveInput) -> GeneratorResult<TokenStream> {
                 });
                 responses_meta.push(quote! {
                     #crate_name::registry::MetaResponse {
-                        description: #item_description.unwrap_or_default(),
+                        summary: #item_summary,
+                        description: #item_description,
                         status: ::std::option::Option::Some(#status),
                         status_range: ::std::option::Option::None,
                         content: {
@@ -355,7 +363,8 @@ pub(crate) fn generate(args: DeriveInput) -> GeneratorResult<TokenStream> {
                 });
                 responses_meta.push(quote! {
                     #crate_name::registry::MetaResponse {
-                        description: #item_description.unwrap_or_default(),
+                        summary: #item_summary,
+                        description: #item_description,
                         status: ::std::option::Option::Some(#status),
                         status_range: ::std::option::Option::None,
                         content: ::std::vec![],
