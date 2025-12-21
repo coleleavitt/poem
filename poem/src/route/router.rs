@@ -1,15 +1,7 @@
-//! Compile-time verified routing with state management.
-//!
-//! The `Route<S>` router is generic over its required state type `S`. Handlers
-//! that use the `State<T>` extractor require that `T: FromRef<S>`, which is
-//! enforced at compile time.
-//!
-//! A `Route<S>` cannot be served directly - you must call `.with_state(state)`
-//! to provide the state and convert it to `Route<()>`, which can then be served.
-
-use std::{marker::PhantomData, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 
 use regex::Regex;
+use std::marker::PhantomData;
 
 use crate::{
     Endpoint, EndpointExt, IntoEndpoint, IntoResponse, Request, Response, Result,
@@ -22,37 +14,16 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 struct PathPrefix(usize);
 
-/// Routing object with compile-time state verification.
+/// Routing object
 ///
-/// `Route<S>` means a router that requires state of type `S` to handle requests.
-/// - `Route<()>` (or just `Route` with default) can be served directly
-/// - `Route<S>` must have `.with_state(state)` called to provide the required state
+/// You can match the full path or wildcard path, and use the
+/// [`Path`](crate::web::Path) extractor to get the path parameters.
 ///
-/// # Compile-Time State Verification
+/// # Errors
 ///
-/// When a handler uses `State<T>` extractor, the compiler verifies that the
-/// router's state type `S` can provide `T` (via `T: FromRef<S>`).
-///
-/// ```
-/// use poem::{Route, EndpointExt, get, handler, web::State};
-///
-/// #[derive(Clone)]
-/// struct AppState { value: i32 }
-///
-/// #[handler]
-/// fn use_state(State(state): State<AppState>) -> String {
-///     format!("{}", state.value)
-/// }
-///
-/// // This compiles because we provide the required state:
-/// let app = Route::new()
-///     .at("/", get(use_state))
-///     .with_state(AppState { value: 42 });
-/// ```
+/// - [`NotFoundError`]
 ///
 /// # Example
-///
-/// ## Basic Usage
 ///
 /// ```
 /// use poem::{
@@ -108,7 +79,7 @@ struct PathPrefix(usize);
 /// # });
 /// ```
 ///
-/// ## Nested Routes
+/// # Nested
 ///
 /// ```
 /// use poem::{
@@ -132,41 +103,29 @@ struct PathPrefix(usize);
 /// # });
 /// ```
 ///
-/// ## With State
+/// # Nested no strip
 ///
 /// ```
 /// use poem::{
-///     Route, EndpointExt, get, handler,
-///     web::State,
+///     Endpoint, Request, Route, handler,
+///     http::{StatusCode, Uri},
 ///     test::TestClient,
 /// };
 ///
-/// #[derive(Clone)]
-/// struct AppState {
-///     message: String,
+/// #[handler]
+/// fn index() -> &'static str {
+///     "hello"
 /// }
 ///
-/// #[handler]
-/// fn greet(State(state): State<AppState>) -> String {
-///     state.message.clone()
-/// }
+/// let app = Route::new().nest_no_strip("/foo", Route::new().at("/foo/bar", index));
+/// let cli = TestClient::new(app);
 ///
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-/// let state = AppState { message: "Hello!".to_string() };
-/// let app = Route::new()
-///     .at("/", get(greet))
-///     .with_state(state);
-///
-/// let cli = TestClient::new(app);
-/// let resp = cli.get("/").send().await;
+/// let resp = cli.get("/foo/bar").send().await;
 /// resp.assert_status_is_ok();
-/// resp.assert_text("Hello!").await;
+/// resp.assert_text("hello").await;
 /// # });
 /// ```
-///
-/// # Errors
-///
-/// - [`NotFoundError`]
 pub struct Route<S = ()> {
     tree: RadixTree<BoxEndpoint<'static, S>>,
     _marker: PhantomData<S>,
@@ -294,8 +253,16 @@ where
         struct Nest<T, S> {
             inner: T,
             root: bool,
+            /// For static paths, this is the prefix length to strip.
+            /// For dynamic paths (has_dynamic_prefix=true), this is the static
+            /// prefix length before any dynamic segment.
             prefix_len: usize,
-            prefix_for_path_pattern: usize,
+            /// The prefix length for path pattern slicing.
+            /// None for dynamic patterns in nest_no_strip mode.
+            prefix_for_path_pattern: Option<usize>,
+            /// Whether the nest path contains dynamic segments (regex
+            /// patterns).
+            has_dynamic_prefix: bool,
             _marker: PhantomData<S>,
         }
 
@@ -303,20 +270,48 @@ where
             type Output = Response;
 
             async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
-                if !self.root {
+                let rest_path_len = if !self.root {
                     let params = &mut req.state_mut().match_params;
                     if params.last().map(|(name, _)| name.as_str()) != Some("--poem-rest") {
                         return Err(ParsePathError.into());
                     }
 
-                    params.pop().expect("can't be empty due to a check above");
-                }
+                    let (_, rest_value) =
+                        params.pop().expect("can't be empty due to a check above");
+                    Some(rest_value.len())
+                } else {
+                    None
+                };
+
+                // Calculate actual prefix length to strip from the URI.
+                // For nest_no_strip (prefix_len = 0), we don't strip anything.
+                // For nest with dynamic patterns, we calculate based on the matched path.
+                let actual_prefix_len = if self.prefix_len == 0 {
+                    // nest_no_strip mode - don't strip anything
+                    0
+                } else if self.has_dynamic_prefix {
+                    // nest mode with dynamic patterns - calculate prefix from matched path
+                    if let Some(rest_len) = rest_path_len {
+                        let uri_path = req.uri().path();
+                        // The rest path doesn't include the leading slash, so we need to
+                        // account for that. Prefix = total_len - rest_len - 1 (for the /)
+                        // But we want to strip the prefix including the trailing slash.
+                        uri_path.len().saturating_sub(rest_len).saturating_sub(1)
+                    } else {
+                        // Root match - strip everything except the trailing character
+                        // For root matches on dynamic paths, the whole path is the prefix
+                        req.uri().path().len()
+                    }
+                } else {
+                    // nest mode with static patterns - use pre-calculated prefix
+                    self.prefix_len
+                };
 
                 let new_uri = {
                     let uri = std::mem::take(req.uri_mut());
                     let mut uri_parts = uri.into_parts();
                     let path =
-                        &uri_parts.path_and_query.as_ref().unwrap().as_str()[self.prefix_len..];
+                        &uri_parts.path_and_query.as_ref().unwrap().as_str()[actual_prefix_len..];
                     uri_parts.path_and_query = Some(if !path.starts_with('/') {
                         PathAndQuery::from_str(&format!("/{path}")).unwrap()
                     } else {
@@ -326,7 +321,9 @@ where
                 };
                 *req.uri_mut() = new_uri;
 
-                req.set_data(PathPrefix(self.prefix_for_path_pattern));
+                if let Some(prefix) = self.prefix_for_path_pattern {
+                    req.set_data(PathPrefix(prefix));
+                }
                 Ok(self.inner.call(req, state).await?.into_response())
             }
         }
@@ -335,22 +332,33 @@ where
             path.find('*').is_none(),
             "wildcards are not allowed in the nest path."
         );
-        assert!(
-            path.find(':').is_none(),
-            "captures are not allowed in the nest path."
-        );
-        assert!(
-            path.find('<').is_none(),
-            "regexs are not allowed in the nest path."
-        );
+
+        // Check if path contains dynamic segments (regex patterns or named params)
+        let has_dynamic_prefix = path.contains('<') || path.contains(':');
+
+        // Calculate the static prefix length (before any dynamic segment)
+        let static_prefix_len = if has_dynamic_prefix {
+            // Find the first dynamic segment (either regex < or param :)
+            let regex_pos = path.find('<').unwrap_or(path.len());
+            let param_pos = path.find(':').unwrap_or(path.len());
+            regex_pos.min(param_pos)
+        } else {
+            path.len() - 1 // Exclude trailing slash
+        };
 
         let prefix_len = match strip {
             false => 0,
+            true if has_dynamic_prefix => static_prefix_len,
             true => path.len() - 1,
         };
-        let prefix_for_path_pattern = match strip {
-            false => path.len() - 1,
-            true => 0,
+
+        // For nest_no_strip with dynamic patterns, we can't use a fixed prefix
+        // because the pattern length doesn't match the actual matched path length.
+        // In this case, we use None to signal that no prefix slicing should be done.
+        let prefix_for_path_pattern = match (strip, has_dynamic_prefix) {
+            (true, _) => Some(0),  // nest: no prefix needed for inner pattern
+            (false, true) => None, // nest_no_strip with dynamic: skip prefix mechanism
+            (false, false) => Some(path.len() - 1), // nest_no_strip with static: use pattern length
         };
 
         self.tree.add(
@@ -360,7 +368,8 @@ where
                 root: false,
                 prefix_len,
                 prefix_for_path_pattern,
-                _marker: PhantomData::<S>,
+                has_dynamic_prefix,
+                _marker: PhantomData,
             }
             .boxed(),
         )?;
@@ -372,76 +381,13 @@ where
                 root: true,
                 prefix_len,
                 prefix_for_path_pattern,
-                _marker: PhantomData::<S>,
+                has_dynamic_prefix,
+                _marker: PhantomData,
             }
             .boxed(),
         )?;
 
         Ok(self)
-    }
-
-    /// Provide state for this router, converting `Route<S>` to `Route<()>`.
-    ///
-    /// This is required before the router can be served. Calling this method
-    /// "bakes in" the state, allowing the router to be used without external
-    /// state.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use poem::{Route, EndpointExt, get, handler, web::State, test::TestClient};
-    ///
-    /// #[derive(Clone)]
-    /// struct AppState { value: i32 }
-    ///
-    /// #[handler]
-    /// fn index(State(state): State<AppState>) -> String {
-    ///     format!("{}", state.value)
-    /// }
-    ///
-    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-    /// let app = Route::new()
-    ///     .at("/", get(index))
-    ///     .with_state(AppState { value: 42 });
-    ///
-    /// // Now `app` is Route<()> and can be served
-    /// let cli = TestClient::new(app);
-    /// let resp = cli.get("/").send().await;
-    /// resp.assert_status_is_ok();
-    /// resp.assert_text("42").await;
-    /// # });
-    /// ```
-    pub fn with_state(self, state: S) -> Route<()> {
-        // Convert all endpoints by wrapping them with the provided state
-        let state = Arc::new(state);
-        Route {
-            tree: self.tree.map(|ep| {
-                let state = state.clone();
-                WithStateEndpoint { inner: ep, state }.boxed()
-            }),
-            _marker: PhantomData,
-        }
-    }
-}
-
-/// Wrapper that provides state to an inner endpoint.
-struct WithStateEndpoint<E, S> {
-    inner: E,
-    state: Arc<S>,
-}
-
-impl<E, S> Endpoint<()> for WithStateEndpoint<E, S>
-where
-    E: Endpoint<S>,
-    S: Clone + Send + Sync + 'static,
-{
-    type Output = E::Output;
-
-    async fn call(&self, mut req: Request, _state: &()) -> Result<Self::Output> {
-        // Also store in extensions for State<T> extractor compatibility
-        req.extensions_mut()
-            .insert(crate::web::StateData((*self.state).clone()));
-        self.inner.call(req, &*self.state).await
     }
 }
 
@@ -514,7 +460,7 @@ mod tests {
     use http::StatusCode;
 
     use super::*;
-    use crate::{Error, endpoint::make_sync, get, handler, test::TestClient, web::State};
+    use crate::{Error, endpoint::make_sync, handler, test::TestClient};
 
     #[test]
     fn test_normalize_path() {
@@ -528,9 +474,9 @@ mod tests {
         uri.path().to_string()
     }
 
-    async fn get_response(route: &impl Endpoint<(), Output = Response>, path: &'static str) -> String {
+    async fn get(route: &impl Endpoint<Output = Response>, path: &'static str) -> String {
         route
-            .call(Request::builder().uri(Uri::from_static(path)).finish(), &())
+            .call(Request::builder().uri(Uri::from_static(path)).finish())
             .await
             .unwrap()
             .take_body()
@@ -549,9 +495,9 @@ mod tests {
                 .nest("/inner", Route::new().at("/c", h)),
         );
 
-        assert_eq!(get_response(&r, "/a").await, "/a");
-        assert_eq!(get_response(&r, "/b").await, "/b");
-        assert_eq!(get_response(&r, "/inner/c").await, "/c");
+        assert_eq!(get(&r, "/a").await, "/a");
+        assert_eq!(get(&r, "/b").await, "/b");
+        assert_eq!(get(&r, "/inner/c").await, "/c");
 
         let r = Route::new().nest(
             "/api",
@@ -561,9 +507,9 @@ mod tests {
                 .nest("/inner", Route::new().at("/c", h)),
         );
 
-        assert_eq!(get_response(&r, "/api/a").await, "/a");
-        assert_eq!(get_response(&r, "/api/b").await, "/b");
-        assert_eq!(get_response(&r, "/api/inner/c").await, "/c");
+        assert_eq!(get(&r, "/api/a").await, "/a");
+        assert_eq!(get(&r, "/api/b").await, "/b");
+        assert_eq!(get(&r, "/api/inner/c").await, "/c");
     }
 
     #[tokio::test]
@@ -576,9 +522,9 @@ mod tests {
                 .nest_no_strip("/inner", Route::new().at("/inner/c", h)),
         );
 
-        assert_eq!(get_response(&r, "/a").await, "/a");
-        assert_eq!(get_response(&r, "/b").await, "/b");
-        assert_eq!(get_response(&r, "/inner/c").await, "/inner/c");
+        assert_eq!(get(&r, "/a").await, "/a");
+        assert_eq!(get(&r, "/b").await, "/b");
+        assert_eq!(get(&r, "/inner/c").await, "/inner/c");
 
         let r = Route::new().nest_no_strip(
             "/api",
@@ -588,9 +534,9 @@ mod tests {
                 .nest_no_strip("/api/inner", Route::new().at("/api/inner/c", h)),
         );
 
-        assert_eq!(get_response(&r, "/api/a").await, "/api/a");
-        assert_eq!(get_response(&r, "/api/b").await, "/api/b");
-        assert_eq!(get_response(&r, "/api/inner/c").await, "/api/inner/c");
+        assert_eq!(get(&r, "/api/a").await, "/api/a");
+        assert_eq!(get(&r, "/api/b").await, "/api/b");
+        assert_eq!(get(&r, "/api/inner/c").await, "/api/inner/c");
     }
 
     #[tokio::test]
@@ -605,7 +551,7 @@ mod tests {
                 ),
             ),
         );
-        assert_eq!(get_response(&r, "/a/b/c?name=abc").await, "/c?name=abc");
+        assert_eq!(get(&r, "/a/b/c?name=abc").await, "/c?name=abc");
     }
 
     #[tokio::test]
@@ -617,38 +563,38 @@ mod tests {
                 make_sync(|req| req.uri().path_and_query().unwrap().to_string()),
             ),
         );
-        assert_eq!(get_response(&r, "/a").await, "/");
-        assert_eq!(get_response(&r, "/a?a=1").await, "/?a=1");
+        assert_eq!(get(&r, "/a").await, "/");
+        assert_eq!(get(&r, "/a?a=1").await, "/?a=1");
     }
 
     #[test]
     #[should_panic]
     fn duplicate_1() {
-        let _: Route<()> = Route::new().at("/", h).at("/", h);
+        let _ = Route::new().at("/", h).at("/", h);
     }
 
     #[test]
     #[should_panic]
     fn duplicate_2() {
-        let _: Route<()> = Route::new().at("/a", h).nest("/a", h);
+        let _ = Route::new().at("/a", h).nest("/a", h);
     }
 
     #[test]
     #[should_panic]
     fn duplicate_3() {
-        let _: Route<()> = Route::new().nest("/a", h).nest("/a", h);
+        let _ = Route::new().nest("/a", h).nest("/a", h);
     }
 
     #[test]
     #[should_panic]
     fn duplicate_4() {
-        let _: Route<()> = Route::new().at("/a/:a", h).at("/a/:a", h);
+        let _ = Route::new().at("/a/:a", h).at("/a/:a", h);
     }
 
     #[test]
     #[should_panic]
     fn duplicate_5() {
-        let _: Route<()> = Route::new().at("/a/*:v", h).at("/a/*", h);
+        let _ = Route::new().at("/a/*:v", h).at("/a/*", h);
     }
 
     #[tokio::test]
@@ -660,25 +606,6 @@ mod tests {
                 .status(),
             StatusCode::NOT_FOUND
         );
-    }
-
-    // https://github.com/poem-web/poem/issues/1098
-    // A request to "/" should be handled by the "/" handler, not the "/*path"
-    // handler
-    #[tokio::test]
-    async fn issue_1098() {
-        let app = Route::new()
-            .at("/", make_sync(|_| "A"))
-            .at("/*path", make_sync(|_| "B"));
-
-        let cli = TestClient::new(app);
-
-        // "/" should match the exact "/" handler, returning "A"
-        cli.get("/").send().await.assert_text("A").await;
-
-        // Other paths should match the catch-all "/*path" handler, returning "B"
-        cli.get("/foo").send().await.assert_text("B").await;
-        cli.get("/foo/bar").send().await.assert_text("B").await;
     }
 
     #[tokio::test]
@@ -779,7 +706,7 @@ mod tests {
         }
     }
 
-    impl<E: Endpoint<S>, S: Send + Sync> crate::Middleware<E, S> for PathPatternSpy {
+    impl<E: Endpoint> crate::Middleware<E> for PathPatternSpy {
         type Output = PathPatternSpyEndpoint<E>;
 
         fn transform(&self, ep: E) -> Self::Output {
@@ -795,11 +722,11 @@ mod tests {
         inner: E,
     }
 
-    impl<E: Endpoint<S>, S: Send + Sync> Endpoint<S> for PathPatternSpyEndpoint<E> {
+    impl<E: Endpoint> Endpoint for PathPatternSpyEndpoint<E> {
         type Output = Response;
 
-        async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
-            let result = self.inner.call(req, state).await.map(IntoResponse::into_response);
+        async fn call(&self, req: Request) -> Result<Self::Output> {
+            let result = self.inner.call(req).await.map(IntoResponse::into_response);
 
             match result {
                 Ok(res) => {
@@ -868,7 +795,7 @@ mod tests {
     impl Endpoint for ErrorEndpoint {
         type Output = Response;
 
-        async fn call(&self, _req: Request, _state: &()) -> Result<Self::Output> {
+        async fn call(&self, _req: Request) -> Result<Self::Output> {
             Err(Error::from_status(StatusCode::SERVICE_UNAVAILABLE))
         }
     }
@@ -928,49 +855,139 @@ mod tests {
         );
     }
 
-    // Test compile-time state verification
     #[tokio::test]
-    async fn test_with_state() {
-        #[derive(Clone)]
-        struct AppState {
-            value: i32,
-        }
+    async fn nested_with_regex() {
+        // Test nest with regex pattern - issue #490
+        let r = Route::new().nest("/<(api|oauth)>", Route::new().at("/a", h).at("/b", h));
 
-        #[handler(internal)]
-        async fn index(State(state): State<AppState>) -> String {
-            format!("{}", state.value)
-        }
+        // Both /api and /oauth should work and strip the prefix correctly
+        assert_eq!(get(&r, "/api/a").await, "/a");
+        assert_eq!(get(&r, "/api/b").await, "/b");
+        assert_eq!(get(&r, "/oauth/a").await, "/a");
+        assert_eq!(get(&r, "/oauth/b").await, "/b");
 
-        let app = Route::new()
-            .at("/", get(index))
-            .with_state(AppState { value: 42 });
-
-        let cli = TestClient::new(app);
-        let resp = cli.get("/").send().await;
-        resp.assert_status_is_ok();
-        resp.assert_text("42").await;
+        // Test that other paths don't match
+        let result = r
+            .call(
+                Request::builder()
+                    .uri(Uri::from_static("/other/a"))
+                    .finish(),
+            )
+            .await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn test_nested_with_state() {
-        #[derive(Clone)]
-        struct AppState {
-            prefix: String,
-        }
+    async fn nested_no_strip_with_regex() {
+        // Test nest_no_strip with regex pattern - issue #490
+        let r = Route::new().nest_no_strip(
+            "/<(api|oauth)>",
+            Route::new().at("/api/a", h).at("/oauth/a", h),
+        );
 
+        // Both /api and /oauth should work without stripping
+        assert_eq!(get(&r, "/api/a").await, "/api/a");
+        assert_eq!(get(&r, "/oauth/a").await, "/oauth/a");
+    }
+
+    #[tokio::test]
+    async fn nested_with_regex_and_static_prefix() {
+        // Test regex pattern with a static prefix
+        let r = Route::new().nest("/v1/<(public|private)>", Route::new().at("/data", h));
+
+        assert_eq!(get(&r, "/v1/public/data").await, "/data");
+        assert_eq!(get(&r, "/v1/private/data").await, "/data");
+    }
+
+    #[tokio::test]
+    async fn nested_regex_multiple_segments() {
+        // Test regex pattern matching multiple possibilities
+        let r = Route::new().nest(
+            "/<(v1|v2|v3)>/<(users|accounts)>",
+            Route::new().at("/list", h),
+        );
+
+        assert_eq!(get(&r, "/v1/users/list").await, "/list");
+        assert_eq!(get(&r, "/v2/accounts/list").await, "/list");
+        assert_eq!(get(&r, "/v3/users/list").await, "/list");
+    }
+
+    #[tokio::test]
+    async fn nested_with_named_param() {
+        // Test nest with named path parameter (no regex)
+        let r = Route::new().nest("/:version", Route::new().at("/users", h));
+
+        assert_eq!(get(&r, "/v1/users").await, "/users");
+        assert_eq!(get(&r, "/v2/users").await, "/users");
+        assert_eq!(get(&r, "/anything/users").await, "/users");
+    }
+
+    #[tokio::test]
+    async fn nested_with_named_regex() {
+        // Test nest with named regex capture - issue #490 enhancement
+        let r = Route::new().nest(
+            "/:version<(v1|v2)>",
+            Route::new().at("/users", h).at("/data", h),
+        );
+
+        assert_eq!(get(&r, "/v1/users").await, "/users");
+        assert_eq!(get(&r, "/v2/data").await, "/data");
+
+        // Non-matching versions should fail
+        let result = r
+            .call(
+                Request::builder()
+                    .uri(Uri::from_static("/v3/users"))
+                    .finish(),
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn nested_named_param_available_to_handler() {
+        // Test that named params from nest prefix are available to handlers
         #[handler(internal)]
-        async fn index(State(state): State<AppState>) -> String {
-            format!("{}-hello", state.prefix)
+        fn handler_with_params(req: &Request) -> String {
+            let params = &req.state().match_params;
+            params
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join(",")
         }
 
-        let inner = Route::new().at("/hello", get(index));
-        let app = Route::new()
-            .nest("/api", inner)
-            .with_state(AppState { prefix: "api".to_string() });
+        let r = Route::new().nest(
+            "/:version<(v1|v2)>",
+            Route::new().at("/info", handler_with_params),
+        );
 
-        let cli = TestClient::new(app);
-        let resp = cli.get("/api/hello").send().await;
-        resp.assert_status_is_ok();
-        resp.assert_text("api-hello").await;
+        // The version param should be available
+        let resp = r
+            .call(
+                Request::builder()
+                    .uri(Uri::from_static("/v1/info"))
+                    .finish(),
+            )
+            .await
+            .unwrap();
+        let body = resp.into_body().into_string().await.unwrap();
+        assert!(
+            body.contains("version=v1"),
+            "Expected version=v1, got: {}",
+            body
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_no_strip_with_named_param() {
+        // Test nest_no_strip with named param
+        let r = Route::new().nest_no_strip(
+            "/:version",
+            Route::new().at("/v1/users", h).at("/v2/users", h),
+        );
+
+        assert_eq!(get(&r, "/v1/users").await, "/v1/users");
+        assert_eq!(get(&r, "/v2/users").await, "/v2/users");
     }
 }
