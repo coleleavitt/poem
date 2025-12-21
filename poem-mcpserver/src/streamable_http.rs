@@ -33,7 +33,7 @@ struct Session<ToolsType> {
     last_active: Instant,
 }
 
-struct State<ToolsType> {
+struct McpState<ToolsType> {
     server_factory: ServerFactoryFn<ToolsType>,
     sessions: Mutex<HashMap<String, Session<ToolsType>>>,
 }
@@ -84,7 +84,7 @@ where
 
 #[handler]
 async fn post_handler<ToolsType>(
-    data: Data<&Arc<State<ToolsType>>>,
+    data: Data<&Arc<McpState<ToolsType>>>,
     request: &Request,
     batch_request: Json<McpBatchRequest>,
     accept: Accept,
@@ -146,7 +146,7 @@ where
 
 #[handler]
 async fn delete_handler<ToolsType>(
-    data: Data<&Arc<State<ToolsType>>>,
+    data: Data<&Arc<McpState<ToolsType>>>,
     headers: &HeaderMap,
 ) -> impl IntoResponse
 where
@@ -173,7 +173,7 @@ where
     F: Fn(&Request) -> McpServer<ToolsType> + Send + Sync + 'static,
     ToolsType: Tools + Send + Sync + 'static,
 {
-    let state = Arc::new(State {
+    let state = Arc::new(McpState {
         server_factory: Box::new(server_factory),
         sessions: Default::default(),
     });

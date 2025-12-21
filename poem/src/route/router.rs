@@ -489,6 +489,33 @@ where
         Ok(self)
     }
 
+    /// Consumes this route and returns a new `Route<()>` that provides the
+    /// given state to all endpoints.
+    ///
+    /// This is the final step when building a stateful route - it converts
+    /// `Route<S>` to `Route<()>` by binding the state, making it ready to be
+    /// used as an endpoint.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use poem::{Route, get, handler, web::State};
+    ///
+    /// #[derive(Clone)]
+    /// struct AppState {
+    ///     message: String,
+    /// }
+    ///
+    /// #[handler]
+    /// fn hello(State(state): State<AppState>) -> String {
+    ///     state.message.clone()
+    /// }
+    ///
+    /// let state = AppState { message: "Hello!".to_string() };
+    /// let app: Route<()> = Route::new()
+    ///     .at("/hello", get(hello))
+    ///     .with_state(state);
+    /// ```
     pub fn with_state(self, state: S) -> Route<()> {
         // Convert all endpoints by wrapping them with the provided state
         let state = Arc::new(state);

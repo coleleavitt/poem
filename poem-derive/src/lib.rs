@@ -43,7 +43,20 @@ pub fn handler(args: TokenStream, input: TokenStream) -> TokenStream {
 fn generate_handler(internal: bool, input: TokenStream) -> Result<TokenStream> {
     let crate_name = utils::get_crate_name(internal);
     let item_fn = syn::parse::<ItemFn>(input)?;
-    let (impl_generics, type_generics, where_clause) = item_fn.sig.generics.split_for_impl();
+    
+    // Create a new generics with __S prepended to the existing generic params
+    let mut combined_generics = item_fn.sig.generics.clone();
+    combined_generics.params.insert(0, syn::parse_quote!(__S));
+    let (combined_impl_generics, _, _) = combined_generics.split_for_impl();
+    
+    let (_, type_generics, _) = item_fn.sig.generics.split_for_impl();
+    
+    // Get just the where predicates without the 'where' keyword
+    let where_predicates = item_fn.sig.generics.where_clause.as_ref().map(|wc| {
+        let predicates = &wc.predicates;
+        quote! { #predicates }
+    }).unwrap_or_else(|| quote! {});
+    
     let vis = &item_fn.vis;
     let docs = item_fn
         .attrs
@@ -129,11 +142,11 @@ fn generate_handler(internal: bool, input: TokenStream) -> Result<TokenStream> {
         #[allow(non_camel_case_types)]
         #def_struct
 
-        impl<__S> #impl_generics #crate_name::Endpoint<__S> for #ident #type_generics
+        impl #combined_impl_generics #crate_name::Endpoint<__S> for #ident #type_generics
         where
             __S: ::std::clone::Clone + ::std::marker::Send + ::std::marker::Sync + 'static,
             #state_bounds_clause
-            #where_clause
+            #where_predicates
         {
             type Output = #crate_name::Response;
 

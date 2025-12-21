@@ -10,7 +10,7 @@ use syn::{Attribute, DeriveInput, Error, ext::IdentExt};
 use crate::{
     common_args::{ExternalDocument, RenameRule, apply_rename_rule_variant},
     error::GeneratorResult,
-    utils::{get_crate_name, get_description_token, optional_literal_token},
+    utils::{get_crate_name, get_description_token, optional_literal, optional_literal_token},
 };
 
 #[derive(FromVariant)]
