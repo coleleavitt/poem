@@ -411,6 +411,74 @@ where
     /// resp.assert_text("42").await;
     /// # });
     /// ```
+
+    /// Merge routes from multiple modules or files using [`Route::merge`]:
+    ///
+    /// ```
+    /// use poem::{Route, handler, get};
+    ///
+    /// mod api_v1 {
+    ///     use poem::{Route, handler, get};
+    ///
+    ///     #[handler]
+    ///     pub fn users() -> &'static str { "users v1" }
+    ///
+    ///     pub fn routes() -> Route {
+    ///         Route::new().at("/api/v1/users", get(users))
+    ///     }
+    /// }
+    ///
+    /// mod api_v2 {
+    ///     use poem::{Route, handler, get};
+    ///
+    ///     #[handler]
+    ///     pub fn users() -> &'static str { "users v2" }
+    ///
+    ///     pub fn routes() -> Route {
+    ///         Route::new().at("/api/v2/users", get(users))
+    ///     }
+    /// }
+    ///
+    /// // Merge routes from different modules
+    /// let app = Route::new()
+    ///     .merge(api_v1::routes())
+    ///     .merge(api_v2::routes());
+    /// ```
+    #[must_use]
+    pub fn merge(self, other: Route<S>) -> Self {
+        check_result(self.try_merge(other))
+    }
+
+    /// Attempts to merge another `Route<S>` into this one.
+    ///
+    /// Returns an error if there are duplicate routes.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use poem::{Route, handler, get};
+    ///
+    /// #[handler]
+    /// fn index() -> &'static str { "index" }
+    ///
+    /// let route_a = Route::new().at("/a", get(index));
+    /// let route_b = Route::new().at("/b", get(index));
+    ///
+    /// // This succeeds - no overlapping paths
+    /// let merged = route_a.try_merge(route_b).unwrap();
+    ///
+    /// // This would fail - duplicate path
+    /// let route_c = Route::new().at("/a", get(index));
+    /// let route_d = Route::new().at("/a", get(index));
+    /// assert!(route_c.try_merge(route_d).is_err());
+    /// ```
+    pub fn try_merge(mut self, other: Route<S>) -> Result<Self, RouteError> {
+        for (pattern, endpoint) in other.tree.into_iter() {
+            self.tree.add(&pattern, endpoint)?;
+        }
+        Ok(self)
+    }
+
     pub fn with_state(self, state: S) -> Route<()> {
         // Convert all endpoints by wrapping them with the provided state
         let state = Arc::new(state);
@@ -972,5 +1040,98 @@ mod tests {
         let resp = cli.get("/api/hello").send().await;
         resp.assert_status_is_ok();
         resp.assert_text("api-hello").await;
+    }
+
+    #[tokio::test]
+    async fn merge_basic() {
+        let route_a: Route<()> = Route::new().at("/a", h).at("/b", h);
+        let route_b: Route<()> = Route::new().at("/c", h).at("/d", h);
+
+        let merged = route_a.merge(route_b);
+
+        assert_eq!(get_response(&merged, "/a").await, "/a");
+        assert_eq!(get_response(&merged, "/b").await, "/b");
+        assert_eq!(get_response(&merged, "/c").await, "/c");
+        assert_eq!(get_response(&merged, "/d").await, "/d");
+    }
+
+    #[tokio::test]
+    async fn merge_multiple() {
+        let route_a: Route<()> = Route::new().at("/users", h);
+        let route_b: Route<()> = Route::new().at("/posts", h);
+        let route_c: Route<()> = Route::new().at("/comments", h);
+
+        let merged: Route<()> = Route::new().merge(route_a).merge(route_b).merge(route_c);
+
+        assert_eq!(get_response(&merged, "/users").await, "/users");
+        assert_eq!(get_response(&merged, "/posts").await, "/posts");
+        assert_eq!(get_response(&merged, "/comments").await, "/comments");
+    }
+
+    #[tokio::test]
+    async fn merge_with_params() {
+        let route_a: Route<()> = Route::new().at("/users/:id", h);
+        let route_b: Route<()> = Route::new().at("/posts/:id", h);
+
+        let merged = route_a.merge(route_b);
+
+        assert_eq!(get_response(&merged, "/users/123").await, "/users/123");
+        assert_eq!(get_response(&merged, "/posts/456").await, "/posts/456");
+    }
+
+    #[tokio::test]
+    async fn merge_with_wildcard() {
+        let route_a: Route<()> = Route::new().at("/files/*path", h);
+        let route_b: Route<()> = Route::new().at("/static/*path", h);
+
+        let merged = route_a.merge(route_b);
+
+        assert_eq!(get_response(&merged, "/files/a/b/c").await, "/files/a/b/c");
+        assert_eq!(get_response(&merged, "/static/x/y/z").await, "/static/x/y/z");
+    }
+
+    #[tokio::test]
+    async fn merge_empty_route() {
+        let route_a: Route<()> = Route::new().at("/a", h);
+        let empty: Route<()> = Route::new();
+
+        let merged = route_a.merge(empty);
+        assert_eq!(get_response(&merged, "/a").await, "/a");
+    }
+
+    #[tokio::test]
+    async fn merge_into_empty_route() {
+        let empty: Route<()> = Route::new();
+        let route_b: Route<()> = Route::new().at("/b", h);
+
+        let merged = empty.merge(route_b);
+        assert_eq!(get_response(&merged, "/b").await, "/b");
+    }
+
+    #[test]
+    fn try_merge_success() {
+        let route_a: Route<()> = Route::new().at("/a", h);
+        let route_b: Route<()> = Route::new().at("/b", h);
+
+        assert!(route_a.try_merge(route_b).is_ok());
+    }
+
+    #[test]
+    fn try_merge_duplicate_fails() {
+        use crate::error::RouteError;
+
+        let route_a: Route<()> = Route::new().at("/a", h);
+        let route_b: Route<()> = Route::new().at("/a", h);
+
+        let result = route_a.try_merge(route_b);
+        assert!(matches!(result, Err(RouteError::Duplicate(_))));
+    }
+
+    #[test]
+    #[should_panic]
+    fn merge_duplicate_panics() {
+        let route_a: Route<()> = Route::new().at("/same", h);
+        let route_b: Route<()> = Route::new().at("/same", h);
+        let _ = route_a.merge(route_b);
     }
 }
