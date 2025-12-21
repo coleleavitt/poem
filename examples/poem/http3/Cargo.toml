@@ -1,0 +1,10 @@
+[package]
+name = "example-http3"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+poem = { workspace = true, features = ["http3"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing-subscriber.workspace = true

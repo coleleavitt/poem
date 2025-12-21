@@ -268,6 +268,9 @@
 
 pub mod endpoint;
 pub mod error;
+#[cfg(feature = "http3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
+pub mod h3;
 #[cfg(feature = "i18n")]
 #[cfg_attr(docsrs, doc(cfg(feature = "i18n")))]
 pub mod i18n;
