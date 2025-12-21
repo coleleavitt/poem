@@ -263,6 +263,25 @@ fn field_description() {
 }
 
 #[test]
+fn description_with_include_str() {
+    /// Header documentation
+    #[doc = include_str!("test_include.txt")]
+    /// Footer documentation
+    #[derive(Object)]
+    struct Obj {
+        a: i32,
+    }
+
+    let meta = get_meta::<Obj>();
+    // The include_str! should be expanded and concatenated with literal docs
+    assert!(meta.description.is_some());
+    let desc = meta.description.unwrap();
+    assert!(desc.contains("Header documentation"));
+    assert!(desc.contains("This is included documentation."));
+    assert!(desc.contains("Footer documentation"));
+}
+
+#[test]
 fn description_preserves_indentation() {
     /// Example JSON:
     ///

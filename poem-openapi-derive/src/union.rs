@@ -11,8 +11,8 @@ use crate::{
     common_args::{ExternalDocument, RenameRule, apply_rename_rule_variant},
     error::GeneratorResult,
     utils::{
-        WrapperType, create_object_name, get_crate_name, get_description, optional_literal,
-        unwrap_box_arc,
+        WrapperType, create_object_name, get_crate_name, get_description, get_description_token,
+        optional_literal, optional_literal_token, unwrap_box_arc,
     },
 };
 
@@ -57,8 +57,9 @@ pub(crate) fn generate(args: DeriveInput) -> GeneratorResult<TokenStream> {
     let ident = &args.ident;
     let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
     let oai_typename = args.rename.clone().unwrap_or_else(|| ident.to_string());
-    let description = get_description(&args.attrs)?;
-    let description = optional_literal(&description);
+    // Use get_description_token to support #[doc = include_str!(...)]
+    let description = get_description_token(&args.attrs)?;
+    let description = optional_literal_token(description);
     let discriminator_name = &args.discriminator_name;
 
     let Data::Enum(e) = &args.data else {
