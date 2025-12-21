@@ -10,6 +10,9 @@ mod handshake_stream;
 mod native_tls;
 #[cfg(feature = "openssl-tls")]
 mod openssl_tls;
+#[cfg(feature = "http3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http3")))]
+pub mod quinn;
 #[cfg(feature = "rustls")]
 mod rustls;
 mod tcp;
