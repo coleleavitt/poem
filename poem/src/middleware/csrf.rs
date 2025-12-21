@@ -225,10 +225,10 @@ impl<E> CsrfEndpoint<E> {
     }
 }
 
-impl<E: Endpoint> Endpoint for CsrfEndpoint<E> {
+impl<E: Endpoint<S>, S: Sync> Endpoint<S> for CsrfEndpoint<E> {
     type Output = E::Output;
 
-    async fn call(&self, mut req: Request) -> Result<Self::Output> {
+    async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
         let existing_cookie = req
             .cookie()
             .get(&self.cookie_name)
@@ -253,7 +253,7 @@ impl<E: Endpoint> Endpoint for CsrfEndpoint<E> {
         req.extensions_mut()
             .insert(CsrfVerifier::new(existing_cookie, self.protect.clone()));
 
-        self.inner.call(req).await
+        self.inner.call(req, state).await
     }
 }
 

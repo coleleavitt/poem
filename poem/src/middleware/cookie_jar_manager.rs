@@ -49,19 +49,19 @@ pub struct CookieJarManagerEndpoint<E> {
     key: Option<Arc<CookieKey>>,
 }
 
-impl<E: Endpoint> Endpoint for CookieJarManagerEndpoint<E> {
+impl<E: Endpoint<S>, S: Sync> Endpoint<S> for CookieJarManagerEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, mut req: Request) -> Result<Self::Output> {
+    async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
         if req.state().cookie_jar.is_none() {
             let mut cookie_jar = CookieJar::extract_from_headers(req.headers());
             cookie_jar.key.clone_from(&self.key);
             req.state_mut().cookie_jar = Some(cookie_jar.clone());
-            let mut resp = self.inner.call(req).await?.into_response();
+            let mut resp = self.inner.call(req, state).await?.into_response();
             cookie_jar.append_delta_to_headers(resp.headers_mut());
             Ok(resp)
         } else {
-            self.inner.call(req).await.map(IntoResponse::into_response)
+            self.inner.call(req, state).await.map(IntoResponse::into_response)
         }
     }
 }

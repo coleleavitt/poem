@@ -74,14 +74,14 @@ where
 
     fn call(&mut self, req: Request) -> Self::Future {
         let ep = self.0.clone();
-        async move { ep.call(req).await.map_err(WrappedError) }.boxed()
+        async move { ep.call(req, &()).await.map_err(WrappedError) }.boxed()
     }
 }
 
 /// An tower service to endpoint adapter.
 pub struct TowerServiceToEndpoint<Svc: Service<Request>>(Buffer<Svc, Request>);
 
-impl<Svc> Endpoint for TowerServiceToEndpoint<Svc>
+impl<Svc, S: Sync> Endpoint<S> for TowerServiceToEndpoint<Svc>
 where
     Svc: Service<Request> + Send + 'static,
     Svc::Future: Send,
@@ -90,7 +90,7 @@ where
 {
     type Output = Svc::Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, _state: &S) -> Result<Self::Output> {
         let mut svc = self.0.clone();
         svc.ready().await.map_err(boxed_err_to_poem_err)?;
         let res = svc.call(req).await.map_err(boxed_err_to_poem_err)?;

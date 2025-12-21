@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use rust_embed::RustEmbed;
 
 use crate::{
-    Endpoint, Error, Request, Response,
+    Endpoint, Request, Response, Result,
     http::{Method, StatusCode, header},
 };
 
@@ -25,10 +25,10 @@ impl<E: RustEmbed + Send + Sync> EmbeddedFileEndpoint<E> {
     }
 }
 
-impl<E: RustEmbed + Send + Sync> Endpoint for EmbeddedFileEndpoint<E> {
+impl<E: RustEmbed + Send + Sync, S: Sync> Endpoint<S> for EmbeddedFileEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output, Error> {
+    async fn call(&self, req: Request, _state: &S) -> Result<Self::Output> {
         if req.method() != Method::GET {
             return Err(StatusCode::METHOD_NOT_ALLOWED.into());
         }
@@ -79,10 +79,10 @@ impl<E: RustEmbed + Send + Sync> EmbeddedFilesEndpoint<E> {
     }
 }
 
-impl<E: RustEmbed + Send + Sync> Endpoint for EmbeddedFilesEndpoint<E> {
+impl<E: RustEmbed + Send + Sync, S: Sync> Endpoint<S> for EmbeddedFilesEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output, Error> {
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
         let path = req.uri().path().trim_start_matches('/');
         let original_path = req.original_uri().path();
         let original_end_with_slash = original_path.ends_with('/');
@@ -96,16 +96,16 @@ impl<E: RustEmbed + Send + Sync> Endpoint for EmbeddedFilesEndpoint<E> {
                 .finish())
         } else if original_end_with_slash {
             let path = format!("{path}index.html");
-            EmbeddedFileEndpoint::<E>::new(&path).call(req).await
+            EmbeddedFileEndpoint::<E>::new(&path).call(req, state).await
         } else if E::get(path).is_some() {
-            EmbeddedFileEndpoint::<E>::new(path).call(req).await
+            EmbeddedFileEndpoint::<E>::new(path).call(req, state).await
         } else if E::get(&format!("{path}/index.html")).is_some() {
             Ok(Response::builder()
                 .status(StatusCode::FOUND)
                 .header(LOCATION, format!("{original_path}/"))
                 .finish())
         } else {
-            EmbeddedFileEndpoint::<E>::new(path).call(req).await
+            EmbeddedFileEndpoint::<E>::new(path).call(req, state).await
         }
     }
 }

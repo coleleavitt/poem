@@ -332,8 +332,8 @@ impl Cookie {
     }
 }
 
-impl<'a> FromRequest<'a> for Cookie {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Sync> FromRequest<'a, S> for Cookie {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         let value = req
             .headers()
             .get(header::COOKIE)
@@ -560,8 +560,8 @@ impl FromStr for CookieJar {
     }
 }
 
-impl<'a> FromRequest<'a> for &'a CookieJar {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Sync> FromRequest<'a, S> for &'a CookieJar {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(req.cookie())
     }
 }

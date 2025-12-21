@@ -172,10 +172,10 @@ impl StaticFilesEndpoint {
     }
 }
 
-impl Endpoint for StaticFilesEndpoint {
+impl<S: Sync> Endpoint<S> for StaticFilesEndpoint {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
         if req.method() != Method::GET {
             return Err(StaticFileError::MethodNotAllowed(req.method().clone()).into());
         }
@@ -210,7 +210,7 @@ impl Endpoint for StaticFilesEndpoint {
                 if let Some(index_file) = &self.index_file {
                     let index_path = self.path.join(index_file);
                     if index_path.is_file() {
-                        return Ok(StaticFileRequest::from_request_without_body(&req)
+                        return Ok(StaticFileRequest::from_request_without_body(&req, state)
                             .await?
                             .create_response(&index_path, self.prefer_utf8, self.no_cache_index)?
                             .into_response());
@@ -221,7 +221,7 @@ impl Endpoint for StaticFilesEndpoint {
         }
 
         if file_path.is_file() {
-            Ok(StaticFileRequest::from_request_without_body(&req)
+            Ok(StaticFileRequest::from_request_without_body(&req, state)
                 .await?
                 .create_response(&file_path, self.prefer_utf8, false)?
                 .into_response())
@@ -240,7 +240,7 @@ impl Endpoint for StaticFilesEndpoint {
             if let Some(index_file) = &self.index_file {
                 let index_path = file_path.join(index_file);
                 if index_path.is_file() {
-                    return Ok(StaticFileRequest::from_request_without_body(&req)
+                    return Ok(StaticFileRequest::from_request_without_body(&req, state)
                         .await?
                         .create_response(&index_path, self.prefer_utf8, self.no_cache_index)?
                         .into_response());
@@ -339,11 +339,11 @@ impl StaticFileEndpoint {
     }
 }
 
-impl Endpoint for StaticFileEndpoint {
+impl<S: Sync> Endpoint<S> for StaticFileEndpoint {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
-        Ok(StaticFileRequest::from_request_without_body(&req)
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
+        Ok(StaticFileRequest::from_request_without_body(&req, state)
             .await?
             .create_response(&self.path, self.prefer_utf8, self.no_cache)?
             .into_response())

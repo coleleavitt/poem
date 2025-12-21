@@ -110,8 +110,8 @@ impl Locale {
     }
 }
 
-impl<'a> FromRequest<'a> for Locale {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Sync> FromRequest<'a, S> for Locale {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         let resources = req
             .extensions()
             .get::<I18NResources>()

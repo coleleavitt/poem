@@ -43,10 +43,10 @@ pub struct PrometheusExporterEndpoint {
     registry: Registry,
 }
 
-impl Endpoint for PrometheusExporterEndpoint {
+impl<S: Sync> Endpoint<S> for PrometheusExporterEndpoint {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, _state: &S) -> Result<Self::Output> {
         if req.method() != Method::GET {
             return Ok(StatusCode::METHOD_NOT_ALLOWED.into());
         }

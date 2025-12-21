@@ -147,8 +147,8 @@ impl Session {
     }
 }
 
-impl<'a> FromRequest<'a> for &'a Session {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Sync> FromRequest<'a, S> for &'a Session {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(req
             .extensions()
             .get::<Session>()

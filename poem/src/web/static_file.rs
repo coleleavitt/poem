@@ -106,8 +106,8 @@ pub struct StaticFileRequest {
     range: Option<Range>,
 }
 
-impl<'a> FromRequest<'a> for StaticFileRequest {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Sync> FromRequest<'a, S> for StaticFileRequest {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(Self {
             if_match: req.headers().typed_get::<IfMatch>(),
             if_unmodified_since: req.headers().typed_get::<IfUnmodifiedSince>(),

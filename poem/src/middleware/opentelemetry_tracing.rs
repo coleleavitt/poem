@@ -51,16 +51,17 @@ pub struct OpenTelemetryTracingEndpoint<T, E> {
     inner: E,
 }
 
-impl<T, E> Endpoint for OpenTelemetryTracingEndpoint<T, E>
+impl<T, E, S> Endpoint<S> for OpenTelemetryTracingEndpoint<T, E>
 where
     T: Tracer + Send + Sync,
     T::Span: Send + Sync + 'static,
-    E: Endpoint,
+    E: Endpoint<S>,
+    S: Send + Sync,
 {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
-        let remote_addr = RealIp::from_request_without_body(&req)
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
+        let remote_addr = RealIp::from_request_without_body(&req, state)
             .await
             .ok()
             .and_then(|real_ip| real_ip.0)
@@ -97,7 +98,7 @@ where
         span.add_event("request.started", vec![]);
 
         async move {
-            let res = self.inner.call(req).await;
+            let res = self.inner.call(req, state).await;
             let cx = Context::current();
             let span = cx.span();
 

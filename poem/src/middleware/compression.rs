@@ -126,7 +126,7 @@ impl<E: Endpoint> Middleware<E> for Compression {
 
 /// Endpoint for the Compression middleware.
 #[cfg_attr(docsrs, doc(cfg(feature = "compression")))]
-pub struct CompressionEndpoint<E: Endpoint> {
+pub struct CompressionEndpoint<E> {
     ep: E,
     level: Option<CompressionLevel>,
     algorithms: HashSet<CompressionAlgo>,
@@ -143,10 +143,10 @@ fn coding_priority(c: &ContentCoding) -> u8 {
     }
 }
 
-impl<E: Endpoint> Endpoint for CompressionEndpoint<E> {
+impl<E: Endpoint<S>, S: Sync> Endpoint<S> for CompressionEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, mut req: Request) -> Result<Self::Output> {
+    async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
         // decompress request body
         if let Some(algo) = req
             .headers()
@@ -167,7 +167,7 @@ impl<E: Endpoint> Endpoint for CompressionEndpoint<E> {
                 ContentCoding::Star | ContentCoding::Zstd => CompressionAlgo::ZSTD,
             });
 
-        let resp = self.ep.call(req).await?;
+        let resp = self.ep.call(req, state).await?;
         match compress_algo {
             Some(algo) => {
                 let mut compress = Compress::new(resp, algo);

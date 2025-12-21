@@ -86,13 +86,13 @@ pub struct TokioMetricsEndpoint<E> {
     monitor: TaskMonitor,
 }
 
-impl<E: Endpoint> Endpoint for TokioMetricsEndpoint<E> {
+impl<E: Endpoint<S>, S: Sync> Endpoint<S> for TokioMetricsEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
         Ok(self
             .monitor
-            .instrument(self.inner.call(req))
+            .instrument(self.inner.call(req, state))
             .await?
             .into_response())
     }

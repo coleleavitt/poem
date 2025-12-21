@@ -38,7 +38,7 @@ impl<T> TowerCompatExt for T {}
 #[cfg_attr(docsrs, doc(cfg(feature = "tower-compat")))]
 pub struct TowerCompatEndpoint<Svc>(Svc);
 
-impl<Svc, ResBody, Err, Fut> Endpoint for TowerCompatEndpoint<Svc>
+impl<Svc, ResBody, Err, Fut, S: Sync> Endpoint<S> for TowerCompatEndpoint<Svc>
 where
     ResBody: hyper::body::Body + Send + Sync + 'static,
     ResBody::Data: Into<Bytes> + Send + 'static,
@@ -57,7 +57,7 @@ where
 {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, _state: &S) -> Result<Self::Output> {
         let mut svc = self.0.clone();
 
         svc.ready().await.map_err(Into::into)?;

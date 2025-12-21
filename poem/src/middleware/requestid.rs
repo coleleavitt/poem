@@ -80,10 +80,10 @@ pub struct RequestIdEndpoint<E> {
     use_incoming_id: ReuseId,
 }
 
-impl<E: Endpoint> Endpoint for RequestIdEndpoint<E> {
+impl<E: Endpoint<S>, S: Sync> Endpoint<S> for RequestIdEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, mut request: Request) -> Result<Self::Output> {
+    async fn call(&self, mut request: Request, state: &S) -> Result<Self::Output> {
         let request_id = if self.use_incoming_id == ReuseId::Use {
             request
                 .header(&self.header_name)
@@ -92,7 +92,7 @@ impl<E: Endpoint> Endpoint for RequestIdEndpoint<E> {
             Uuid::new_v4().to_string()
         };
         request.set_data(ReqId(request_id.clone()));
-        let response = self.next.call(request);
+        let response = self.next.call(request, state);
         let response = response.instrument(error_span!("", %request_id));
         match response.await {
             Ok(res) => Ok(res
@@ -114,8 +114,8 @@ impl std::fmt::Display for ReqId {
     }
 }
 
-impl<'a> FromRequest<'a> for ReqId {
-    async fn from_request(req: &'a Request, _: &mut crate::RequestBody) -> Result<Self> {
+impl<'a, S: Sync> FromRequest<'a, S> for ReqId {
+    async fn from_request(req: &'a Request, _: &mut crate::RequestBody, _state: &S) -> Result<Self> {
         Ok(req
             .extensions()
             .get::<ReqId>()

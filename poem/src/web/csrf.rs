@@ -20,8 +20,8 @@ impl Deref for CsrfToken {
     }
 }
 
-impl<'a> FromRequest<'a> for &'a CsrfToken {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Sync> FromRequest<'a, S> for &'a CsrfToken {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(req
             .extensions()
             .get::<CsrfToken>()
@@ -60,8 +60,8 @@ impl CsrfVerifier {
     }
 }
 
-impl<'a> FromRequest<'a> for &'a CsrfVerifier {
-    async fn from_request(req: &'a Request, _body: &mut RequestBody) -> Result<Self> {
+impl<'a, S: Sync> FromRequest<'a, S> for &'a CsrfVerifier {
+    async fn from_request(req: &'a Request, _body: &mut RequestBody, _state: &S) -> Result<Self> {
         Ok(req
             .extensions()
             .get::<CsrfVerifier>()

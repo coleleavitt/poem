@@ -68,10 +68,10 @@ pub struct OpenTelemetryMetricsEndpoint<E> {
     inner: E,
 }
 
-impl<E: Endpoint> Endpoint for OpenTelemetryMetricsEndpoint<E> {
+impl<E: Endpoint<S>, S: Sync> Endpoint<S> for OpenTelemetryMetricsEndpoint<E> {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, state: &S) -> Result<Self::Output> {
         let mut labels = Vec::with_capacity(3);
         labels.push(KeyValue::new(
             trace::HTTP_REQUEST_METHOD,
@@ -83,7 +83,7 @@ impl<E: Endpoint> Endpoint for OpenTelemetryMetricsEndpoint<E> {
         ));
 
         let s = Instant::now();
-        let res = self.inner.call(req).await.map(IntoResponse::into_response);
+        let res = self.inner.call(req, state).await.map(IntoResponse::into_response);
         let elapsed = s.elapsed();
 
         match &res {

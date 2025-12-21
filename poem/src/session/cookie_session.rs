@@ -42,10 +42,10 @@ pub struct CookieSessionEndpoint<E> {
     config: Arc<CookieConfig>,
 }
 
-impl<E: Endpoint> Endpoint for CookieSessionEndpoint<E> {
+impl<E: Endpoint<S>, S: Sync> Endpoint<S> for CookieSessionEndpoint<E> {
     type Output = E::Output;
 
-    async fn call(&self, mut req: Request) -> Result<Self::Output> {
+    async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
         let cookie_jar = req.cookie().clone();
         let session = self
             .config
@@ -64,7 +64,7 @@ impl<E: Endpoint> Endpoint for CookieSessionEndpoint<E> {
             .unwrap_or_default();
 
         req.extensions_mut().insert(session.clone());
-        let resp = self.inner.call(req).await?;
+        let resp = self.inner.call(req, state).await?;
 
         match session.status() {
             SessionStatus::Changed | SessionStatus::Renewed => {

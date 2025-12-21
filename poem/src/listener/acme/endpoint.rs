@@ -38,10 +38,10 @@ pub struct Http01Endpoint {
     pub keys: Http01TokensMap,
 }
 
-impl Endpoint for Http01Endpoint {
+impl<S: Sync> Endpoint<S> for Http01Endpoint {
     type Output = Response;
 
-    async fn call(&self, req: Request) -> Result<Self::Output> {
+    async fn call(&self, req: Request, _state: &S) -> Result<Self::Output> {
         if let Some(token) = req
             .uri()
             .path()

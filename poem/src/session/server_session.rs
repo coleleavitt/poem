@@ -52,14 +52,15 @@ pub struct ServerSessionEndpoint<T, E> {
     storage: Arc<T>,
 }
 
-impl<T, E> Endpoint for ServerSessionEndpoint<T, E>
+impl<T, E, S> Endpoint<S> for ServerSessionEndpoint<T, E>
 where
     T: SessionStorage,
-    E: Endpoint,
+    E: Endpoint<S>,
+    S: Sync,
 {
     type Output = E::Output;
 
-    async fn call(&self, mut req: Request) -> Result<Self::Output> {
+    async fn call(&self, mut req: Request, state: &S) -> Result<Self::Output> {
         let cookie_jar = req.cookie().clone();
         let mut session_id = self.config.get_cookie_value(&cookie_jar);
         let session = match &session_id {
@@ -74,7 +75,7 @@ where
         };
 
         req.extensions_mut().insert(session.clone());
-        let resp = self.inner.call(req).await?;
+        let resp = self.inner.call(req, state).await?;
 
         match session.status() {
             SessionStatus::Changed => match session_id {
