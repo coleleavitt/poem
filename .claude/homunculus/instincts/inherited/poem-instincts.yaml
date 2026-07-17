@@ -1,0 +1,544 @@
+# Instincts generated from https://github.com/coleleavitt/poem
+# Generated: 2026-07-17T18:33:10.407Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: poem-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: feat, fix, chore, perf
+
+## Evidence
+
+- 21 commits analyzed
+- Detected conventional commit pattern
+- Examples: feat(mcp): support prompts (#1155), fix(poem): compression middleware (#1157)
+
+---
+id: poem-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Commit Length
+
+## Action
+
+Write moderate-length commit messages (~52 characters)
+
+## Evidence
+
+- Average commit message length: 52 chars
+- Based on 21 commits
+
+---
+id: poem-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: poem-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: poem-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: poem-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: poem-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~16x per month
+- Files: **/*.test.*, **/api/**
+
+---
+id: poem-workflow-add-or-update-mcpserver-feature
+trigger: "when doing add or update mcpserver feature"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Workflow Add Or Update Mcpserver Feature
+
+## Action
+
+Follow the add-or-update-mcpserver-feature workflow:
+1. Edit or create files in poem-mcpserver/src/ (such as protocol/*.rs, server.rs, streamable_http.rs, stdio.rs, tool.rs, resources.rs, lib.rs)
+2. Update or add macros in poem-mcpserver-macros/src/
+3. Update or add tests in poem-mcpserver/tests/
+4. Update or add example projects in examples/mcpserver/
+5. Update Cargo.toml if necessary
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: poem-mcpserver/src/*.rs, poem-mcpserver/src/protocol/*.rs, poem-mcpserver-macros/src/*.rs
+
+---
+id: poem-workflow-add-or-update-poem-openapi-feature-or-test
+trigger: "when doing add or update poem openapi feature or test"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Workflow Add Or Update Poem Openapi Feature Or Test
+
+## Action
+
+Follow the add-or-update-poem-openapi-feature-or-test workflow:
+1. Edit or create files in poem-openapi/src/ (such as openapi.rs, registry/mod.rs, types/external/*.rs)
+2. Update or add tests in poem-openapi/tests/
+3. Update or add documentation in poem-openapi/src/docs/
+4. Update or add derive macros in poem-openapi-derive/src/
+5. Update Cargo.toml if necessary
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: poem-openapi/src/*.rs, poem-openapi/src/registry/*.rs, poem-openapi/src/types/external/*.rs
+
+---
+id: poem-workflow-bump-crate-version-or-dependency
+trigger: "when doing bump crate version or dependency"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Workflow Bump Crate Version Or Dependency
+
+## Action
+
+Follow the bump-crate-version-or-dependency workflow:
+1. Edit Cargo.toml in one or more crates to bump version or dependency
+2. Optionally update related source files if API changes
+3. Commit with a message indicating the version bump or dependency update
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: Cargo.toml, */Cargo.toml, */src/*.rs
+
+---
+id: poem-workflow-add-or-update-example-project
+trigger: "when doing add or update example project"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/coleleavitt/poem
+---
+
+# Poem Workflow Add Or Update Example Project
+
+## Action
+
+Follow the add-or-update-example-project workflow:
+1. Create or edit examples/*/Cargo.toml
+2. Create or edit examples/*/src/*.rs
+3. Optionally update README.md or add assets (e.g., images, HTML)
+4. Commit with a message referencing the example
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: examples/*/Cargo.toml, examples/*/src/*.rs, examples/*/README.md
+
+---
+id: poem-instinct-naming-files
+trigger: "When creating or renaming a file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Naming Files
+
+## Action
+
+Use camelCase for file names
+
+## Evidence
+
+- Pattern in namingConventions.files: camelCase
+
+---
+id: poem-instinct-naming-functions
+trigger: "When defining a function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Naming Functions
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in namingConventions.functions: camelCase
+
+---
+id: poem-instinct-naming-classes
+trigger: "When defining a class or struct"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Naming Classes
+
+## Action
+
+Use PascalCase for class/struct names
+
+## Evidence
+
+- Pattern in namingConventions.classes: PascalCase
+
+---
+id: poem-instinct-naming-constants
+trigger: "When defining a constant"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Naming Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in namingConventions.constants: SCREAMING_SNAKE_CASE
+
+---
+id: poem-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Import Style
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in importStyle: relative
+
+---
+id: poem-instinct-export-style
+trigger: "When exporting modules or functions"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle: named
+
+---
+id: poem-instinct-test-location
+trigger: "When adding tests"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Test Location
+
+## Action
+
+Place tests in both source and tests/ directories as appropriate (mixed location)
+
+## Evidence
+
+- Pattern in architecture.folderStructure.testLocation: mixed
+- Files in poem-mcpserver/tests/*.rs and poem-openapi/tests/*.rs
+
+---
+id: poem-instinct-test-type
+trigger: "When writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Test Type
+
+## Action
+
+Write unit tests
+
+## Evidence
+
+- Pattern in testing.testTypes: unit
+
+---
+id: poem-instinct-test-pattern
+trigger: "When naming test files"
+confidence: 0.3
+domain: testing
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Test Pattern
+
+## Action
+
+Use the pattern *.test.ts for test files (if TypeScript is used elsewhere)
+
+## Evidence
+
+- Pattern in testing.filePattern: *.test.ts
+
+---
+id: poem-instinct-commit-format
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Commit Format
+
+## Action
+
+Use Conventional Commits format with prefixes: feat, fix, chore, perf
+
+## Evidence
+
+- Pattern in commits.prefixes: [feat, fix, chore, perf]
+- Seen in commit: feat(mcp): support prompts (#1155)
+- Seen in commit: fix(poem): compression middleware (#1157)
+
+---
+id: poem-instinct-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Commit Length
+
+## Action
+
+Keep commit message length around 52 characters on average
+
+## Evidence
+
+- Pattern in commits.averageLength: 52
+
+---
+id: poem-instinct-workflow-mcpserver-feature
+trigger: "When adding or updating a feature in poem-mcpserver"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Workflow Mcpserver Feature
+
+## Action
+
+Edit or create files in poem-mcpserver/src/, update macros in poem-mcpserver-macros/src/, add/update tests in poem-mcpserver/tests/, update/add examples in examples/mcpserver/, and update Cargo.toml if necessary
+
+## Evidence
+
+- Workflow: add-or-update-mcpserver-feature
+- Example commits and files in workflow data
+
+---
+id: poem-instinct-workflow-openapi-feature
+trigger: "When adding or updating a feature or test in poem-openapi"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Workflow Openapi Feature
+
+## Action
+
+Edit or create files in poem-openapi/src/, update/add tests in poem-openapi/tests/, update/add documentation in poem-openapi/src/docs/, update/add derive macros in poem-openapi-derive/src/, and update Cargo.toml if necessary
+
+## Evidence
+
+- Workflow: add-or-update-poem-openapi-feature-or-test
+- Example commits and files in workflow data
+
+---
+id: poem-instinct-workflow-bump-version
+trigger: "When bumping a crate version or updating a dependency"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Workflow Bump Version
+
+## Action
+
+Edit Cargo.toml in one or more crates, optionally update related source files if API changes, and commit with a message indicating the version bump or dependency update
+
+## Evidence
+
+- Workflow: bump-crate-version-or-dependency
+- Example commits and files in workflow data
+
+---
+id: poem-instinct-workflow-example-project
+trigger: "When adding or updating an example project"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: coleleavitt/poem
+---
+
+# Poem Instinct Workflow Example Project
+
+## Action
+
+Create or edit examples/*/Cargo.toml, examples/*/src/*.rs, optionally update README.md or add assets (images, HTML), and commit with a message referencing the example
+
+## Evidence
+
+- Workflow: add-or-update-example-project
+- Example commits and files in workflow data
+
